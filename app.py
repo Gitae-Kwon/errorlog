@@ -1,4 +1,5 @@
-# app.py — 장애 현황 대시보드 (KPI + 필터 + AgGrid 목록/상세 + 업로드/삭제 + 줄바꿈 표시)
+# app_kpi_multiline.py
+# KPI 카드 + 필터 + 업로드/삭제 + 표/상세 줄바꿈 표시
 
 import os
 import pandas as pd
@@ -7,16 +8,24 @@ import streamlit as st
 from datetime import datetime, timedelta
 from sqlalchemy import create_engine, text
 
-# AgGrid
-from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode, JsCode
-
 st.set_page_config(page_title="장애 현황 대시보드", page_icon="📊", layout="wide")
 st.title("📊 장애 현황 대시보드")
-st.caption("KPI 카드 · 필터 · AgGrid 목록/상세 · 업로드/삭제 · 줄바꿈 표시")
+st.caption("KPI 카드 · 필터 · 업로드/삭제 관리 · 줄바꿈 표시")
 
-# ─────────────────────────────────────────────────────────────────────────────
-# DB 연결 (secrets 읽기 + SSL 강제)
-# ─────────────────────────────────────────────────────────────────────────────
+# --- 셀에서 줄바꿈 보존 (표/에디터/툴팁 모두) ---
+st.markdown("""
+<style>
+[data-testid="stDataFrame"] div[role="gridcell"],
+[data-testid="stDataEditor"] div[role="gridcell"]{
+  white-space: pre-wrap !important;   /* \\n 표시 */
+  line-height: 1.3;
+}
+</style>
+""", unsafe_allow_html=True)
+
+# ---------------------------
+# DB 연결 (Secrets 읽기 + SSL 강제)
+# ---------------------------
 @st.cache_resource(show_spinner=False)
 def get_engine():
     s = st.secrets
@@ -41,50 +50,34 @@ def get_engine():
         st.stop()
 
     url = f"mysql+pymysql://{user}:{pw}@{host}:{port}/{name}?charset=utf8mb4"
-    # MySQL 8 (caching_sha2_password) 인증 오류 방지: SSL 강제
-    connect_args = {"ssl": {"ssl": True}}
-
-    try:
-        eng = create_engine(url, pool_pre_ping=True, connect_args=connect_args)
-        with eng.connect() as conn:
-            conn.execute(text("SELECT 1"))
-        return eng
-    except Exception as e:
-        st.error(f"DB 연결 실패: {e}")
-        st.stop()
+    connect_args = {"ssl": {"ssl": True}}  # MySQL8 인증 이슈 방지
+    eng = create_engine(url, pool_pre_ping=True, connect_args=connect_args)
+    with eng.connect() as conn:
+        conn.execute(text("SELECT 1"))
+    return eng
 
 engine = get_engine()
 
-# ─────────────────────────────────────────────────────────────────────────────
-# 공통 쿼리
-# ─────────────────────────────────────────────────────────────────────────────
+# ---------------------------
+# 쿼리 유틸
+# ---------------------------
 @st.cache_data(ttl=180, show_spinner=False)
 def get_distinct_values():
     with engine.connect() as conn:
-        platforms = pd.read_sql(text(
-            "SELECT DISTINCT platform FROM incidents "
-            "WHERE platform IS NOT NULL AND platform<>'' ORDER BY platform"
-        ), conn)["platform"].tolist()
-        locales = pd.read_sql(text(
-            "SELECT DISTINCT locale FROM incidents "
-            "WHERE locale IS NOT NULL AND locale<>'' ORDER BY locale"
-        ), conn)["locale"].tolist()
-        cats = pd.read_sql(text(
-            "SELECT DISTINCT category FROM incidents "
-            "WHERE category IS NOT NULL AND category<>'' ORDER BY category"
-        ), conn)["category"].tolist()
+        platforms = pd.read_sql(text("SELECT DISTINCT platform FROM incidents WHERE platform<>'' AND platform IS NOT NULL ORDER BY platform"), conn)["platform"].tolist()
+        locales   = pd.read_sql(text("SELECT DISTINCT locale   FROM incidents WHERE locale<>''   AND locale   IS NOT NULL ORDER BY locale"), conn)["locale"].tolist()
+        cats      = pd.read_sql(text("SELECT DISTINCT category FROM incidents WHERE category<>'' AND category IS NOT NULL ORDER BY category"), conn)["category"].tolist()
     return platforms, locales, cats
 
 PLATFORMS, LOCALES, CATEGORIES = get_distinct_values()
 
-# ─────────────────────────────────────────────────────────────────────────────
+# ---------------------------
 # 사이드바 필터
-# ─────────────────────────────────────────────────────────────────────────────
+# ---------------------------
 with st.sidebar:
     st.header("필터")
     today = datetime.now().date()
-    default_from = today - timedelta(days=30)
-    date_from, date_to = st.date_input("기간(started_at)", value=(default_from, today))
+    date_from, date_to = st.date_input("기간(started_at)", value=(today - timedelta(days=30), today))
     if isinstance(date_from, tuple):  # 안전장치
         date_from, date_to = date_from
 
@@ -94,10 +87,8 @@ with st.sidebar:
     keyword = st.text_input("키워드(내용/원인/대응/비고)")
     limit = st.number_input("목록 행수", min_value=50, max_value=5000, value=500, step=50)
 
-params = {
-    "date_from": datetime.combine(date_from, datetime.min.time()),
-    "date_to":   datetime.combine(date_to,   datetime.max.time()),
-}
+params = {"date_from": datetime.combine(date_from, datetime.min.time()),
+          "date_to":   datetime.combine(date_to,   datetime.max.time())}
 where = ["i.started_at BETWEEN :date_from AND :date_to"]
 if sel_platforms:
     where.append("i.platform IN :platforms");   params["platforms"]  = tuple(sel_platforms)
@@ -113,36 +104,20 @@ where_sql = " AND ".join(where)
 @st.cache_data(ttl=90, show_spinner=False)
 def fetch_kpis(where_sql: str, params: dict):
     with engine.connect() as conn:
-        total = pd.read_sql(text(
-            f"SELECT COUNT(*) cnt FROM incidents i WHERE {where_sql}"
-        ), conn, params=params)["cnt"].iloc[0]
-
+        total = pd.read_sql(text(f"SELECT COUNT(*) cnt FROM incidents i WHERE {where_sql}"), conn, params=params)["cnt"].iloc[0]
         tparams = dict(params)
         tparams["date_from"] = datetime.combine(datetime.now().date(), datetime.min.time())
         tparams["date_to"]   = datetime.combine(datetime.now().date(), datetime.max.time())
-        today_cnt = pd.read_sql(text(
-            f"SELECT COUNT(*) cnt FROM incidents i WHERE {where_sql}"
-        ), conn, params=tparams)["cnt"].iloc[0]
-
-        top_cat_df = pd.read_sql(text(
-            f"SELECT i.category, COUNT(*) cnt FROM incidents i "
-            f"WHERE {where_sql} GROUP BY i.category ORDER BY cnt DESC LIMIT 1"
-        ), conn, params=params)
+        today_cnt = pd.read_sql(text(f"SELECT COUNT(*) cnt FROM incidents i WHERE {where_sql}"), conn, params=tparams)["cnt"].iloc[0]
+        top_cat_df = pd.read_sql(text(f"SELECT i.category, COUNT(*) cnt FROM incidents i WHERE {where_sql} GROUP BY i.category ORDER BY cnt DESC LIMIT 1"), conn, params=params)
         top_cat = (top_cat_df["category"].iloc[0], int(top_cat_df["cnt"].iloc[0])) if not top_cat_df.empty else ("-", 0)
-
-        plat_df = pd.read_sql(text(
-            f"SELECT i.platform, COUNT(*) cnt FROM incidents i "
-            f"WHERE {where_sql} GROUP BY i.platform ORDER BY cnt DESC"
-        ), conn, params=params)
+        plat_df = pd.read_sql(text(f"SELECT i.platform, COUNT(*) cnt FROM incidents i WHERE {where_sql} GROUP BY i.platform ORDER BY cnt DESC"), conn, params=params)
     return total, today_cnt, top_cat, plat_df
 
 @st.cache_data(ttl=90, show_spinner=False)
 def fetch_timeseries(where_sql: str, params: dict) -> pd.DataFrame:
     with engine.connect() as conn:
-        return pd.read_sql(text(
-            f"SELECT DATE(i.started_at) d, COUNT(*) cnt "
-            f"FROM incidents i WHERE {where_sql} GROUP BY DATE(i.started_at) ORDER BY d"
-        ), conn, params=params)
+        return pd.read_sql(text(f"SELECT DATE(i.started_at) d, COUNT(*) cnt FROM incidents i WHERE {where_sql} GROUP BY DATE(i.started_at) ORDER BY d"), conn, params=params)
 
 @st.cache_data(ttl=90, show_spinner=False)
 def fetch_list(where_sql: str, params: dict, limit: int) -> pd.DataFrame:
@@ -157,19 +132,18 @@ def fetch_list(where_sql: str, params: dict, limit: int) -> pd.DataFrame:
     p = dict(params); p["limit"] = int(limit)
     with engine.connect() as conn:
         df = pd.read_sql(q, conn, params=p)
-
     if not df.empty:
         df["started_at"] = pd.to_datetime(df["started_at"]).dt.strftime("%Y-%m-%d %H:%M")
         df["ended_at"]   = df["ended_at"].apply(lambda x: "" if pd.isna(x) else pd.to_datetime(x).strftime("%Y-%m-%d %H:%M"))
-        # 개행 정규화 (윈도우 \r\n → \n)
+        # ★ 개행 정규화 (윈도우 \r\n → \n) : 표에서 줄바꿈 보이도록
         for col in ["description", "cause", "response", "note"]:
             if col in df.columns:
                 df[col] = df[col].astype(str).str.replace("\r\n", "\n").str.replace("\r", "\n")
     return df
 
-# ─────────────────────────────────────────────────────────────────────────────
+# ---------------------------
 # KPI 카드
-# ─────────────────────────────────────────────────────────────────────────────
+# ---------------------------
 try:
     total, today_cnt, (top_cat_name, top_cat_cnt), plat_df = fetch_kpis(where_sql, params)
     c1, c2, c3, c4 = st.columns(4)
@@ -190,101 +164,72 @@ try:
 except Exception as e:
     st.warning(f"KPI 로딩 오류: {e}")
 
-# ─────────────────────────────────────────────────────────────────────────────
-# 사건 목록 (AgGrid) + 클릭 시 상세 표시
-# ─────────────────────────────────────────────────────────────────────────────
-st.subheader("📄 사건 목록 (줄바꿈 표시 & 클릭으로 상세 열기)")
+# ---------------------------
+# 일별 추이
+# ---------------------------
+st.subheader("📈 일별 발생 추이")
+ts_df = fetch_timeseries(where_sql, params)
+if ts_df.empty:
+    st.info("데이터가 없습니다.")
+else:
+    st.altair_chart(
+        alt.Chart(ts_df).mark_line(point=True).encode(x='d:T', y='cnt:Q', tooltip=['d:T','cnt:Q']),
+        use_container_width=True
+    )
 
-if "selected_id" not in st.session_state:
-    st.session_state.selected_id = None
-
+# ---------------------------
+# 목록 (줄바꿈 보이는 표)
+# ---------------------------
+st.subheader("📄 사건 목록 (줄바꿈 표시)")
 list_df = fetch_list(where_sql, params, int(limit))
 if list_df.empty:
     st.info("조건에 맞는 데이터가 없습니다.")
 else:
-    # \n -> <br/> 렌더러 (자동 줄바꿈 + 높이)
-    nl2br = JsCode("""
-        function(params) {
-          if (!params.value) return '';
-          return params.value.replace(/\\n/g, '<br/>');
-        }
-    """)
-
-    gb = GridOptionsBuilder.from_dataframe(list_df)
-    gb.configure_selection(selection_mode="single", use_checkbox=False)
-    for c in ["description", "cause", "response", "note"]:
-        if c in list_df.columns:
-            gb.configure_column(c, cellRenderer=nl2br, wrapText=True, autoHeight=True)
-    gb.configure_grid_options(domLayout="normal")
-    gridOptions = gb.build()
-
-    grid = AgGrid(
+    st.data_editor(
         list_df,
-        gridOptions=gridOptions,
-        update_mode=GridUpdateMode.SELECTION_CHANGED,
-        allow_unsafe_jscode=True,
-        fit_columns_on_grid_load=True,
-        height=520,
+        use_container_width=True,
+        height=420,
+        hide_index=True,
+        disabled=True,
+        column_config={
+            "description": st.column_config.TextColumn("description", width="medium"),
+            "cause":       st.column_config.TextColumn("cause",       width="large"),
+            "response":    st.column_config.TextColumn("response",    width="large"),
+            "note":        st.column_config.TextColumn("note",        width="medium"),
+        },
     )
 
-    # 행 선택 결과
-    sel_rows = grid.get("selected_rows", [])
-    new_id = sel_rows[0]["id"] if sel_rows else None
-
-    # 선택 상태 업데이트
-    if new_id is not None and new_id != st.session_state.selected_id:
-        st.session_state.selected_id = int(new_id)
-    elif new_id is None and st.session_state.selected_id is not None:
-        st.session_state.selected_id = None
-
-# ─────────────────────────────────────────────────────────────────────────────
-# 상세 보기 (선택 전에는 비노출)
-# ─────────────────────────────────────────────────────────────────────────────
-st.markdown("---")
-st.subheader("🔎 상세 보기")
-
-if st.session_state.selected_id is None:
-    st.caption("위 표에서 행을 클릭하면 상세가 여기에 표시됩니다.")
-else:
-    with engine.connect() as conn:
-        detail = pd.read_sql(
-            text("SELECT * FROM incidents WHERE id=:id"),
-            conn, params={"id": st.session_state.selected_id}
-        )
-    if detail.empty:
-        st.info("해당 ID의 데이터가 없습니다.")
-    else:
-        row = detail.iloc[0]
-        c1, c2, c3 = st.columns([1,1,1])
-        with c1:
+# ---------------------------
+# 상세 보기 (줄바꿈 유지)
+# ---------------------------
+if not list_df.empty:
+    st.markdown("---")
+    st.subheader("🔎 상세 보기")
+    sel_id = st.selectbox("Incident 선택", options=list_df["id"].tolist())
+    if sel_id:
+        with engine.connect() as conn:
+            detail = pd.read_sql(text("SELECT * FROM incidents WHERE id=:id"), conn, params={"id": int(sel_id)})
+        if not detail.empty:
+            row = detail.iloc[0]
             st.write(f"**ID**: {int(row['id'])}")
-            st.write(f"**카테고리**: {row.get('category','')}")
-            st.write(f"**플랫폼/로케일**: {row.get('platform','')} / {row.get('locale','')}")
-        with c2:
-            st.write(f"**시작**: {row.get('started_at','')}")
-            st.write(f"**종료**: {row.get('ended_at','')}")
+            st.write(f"**시작**: {row['started_at']}")
+            st.write(f"**종료**: {row['ended_at']}")
             st.write(f"**장애시간**: {row.get('duration','')}")
-        with c3:
+            st.write(f"**플랫폼/로케일**: {row.get('platform','')} / {row.get('locale','')}")
             st.write(f"**문의량**: {row.get('inquiry_count','')}")
-            st.write(f"**작성**: {row.get('created_at','')}")
-            st.write(f"**수정**: {row.get('updated_at','')}")
+            st.write(f"**카테고리**: {row.get('category','')}")
+            st.markdown("**장애내용**")
+            st.markdown(f"<div style='white-space:pre-wrap'>{row.get('description','') or ''}</div>", unsafe_allow_html=True)
+            st.markdown("**원인**")
+            st.markdown(f"<div style='white-space:pre-wrap'>{row.get('cause','') or ''}</div>", unsafe_allow_html=True)
+            st.markdown("**대응**")
+            st.markdown(f"<div style='white-space:pre-wrap'>{row.get('response','') or ''}</div>", unsafe_allow_html=True)
+            st.markdown("**비고**")
+            st.markdown(f"<div style='white-space:pre-wrap'>{row.get('note','') or ''}</div>", unsafe_allow_html=True)
 
-        st.markdown("**장애내용**")
-        st.markdown(f"<div style='white-space:pre-wrap'>{row.get('description','') or ''}</div>", unsafe_allow_html=True)
-        st.markdown("**원인**")
-        st.markdown(f"<div style='white-space:pre-wrap'>{row.get('cause','') or ''}</div>", unsafe_allow_html=True)
-        st.markdown("**대응**")
-        st.markdown(f"<div style='white-space:pre-wrap'>{row.get('response','') or ''}</div>", unsafe_allow_html=True)
-        st.markdown("**비고**")
-        st.markdown(f"<div style='white-space:pre-wrap'>{row.get('note','') or ''}</div>", unsafe_allow_html=True)
-
-        if st.button("선택 해제 / 상세 닫기", use_container_width=True):
-            st.session_state.selected_id = None
-            st.experimental_rerun()
-
-# ─────────────────────────────────────────────────────────────────────────────
-# 관리: 선택 삭제 & 업로드
-# ─────────────────────────────────────────────────────────────────────────────
+# ---------------------------
+# 관리: 선택 삭제
+# ---------------------------
 with st.expander("🗑 관리: ID로 선택 삭제"):
     ids = st.text_input("삭제할 ID들(쉼표로 구분)", placeholder="예: 101,102,120")
     if st.button("삭제 실행", type="primary"):
@@ -300,6 +245,9 @@ with st.expander("🗑 관리: ID로 선택 삭제"):
         except Exception as e:
             st.error(f"삭제 중 오류: {e}")
 
+# ---------------------------
+# 관리: 업로드 (CSV/엑셀)
+# ---------------------------
 with st.expander("⬆️ 관리: 업로드 (CSV/XLSX)"):
     st.caption("가능한 컬럼: started_at, ended_at, duration, platform, locale, inquiry_count, category, description, cause, response, note")
     file = st.file_uploader("파일 선택", type=["csv", "xlsx", "xls"])
@@ -318,7 +266,7 @@ with st.expander("⬆️ 관리: 업로드 (CSV/XLSX)"):
         missing = [c for c in required if c not in df.columns]
         if missing:
             raise ValueError(f"필수 컬럼 누락: {missing}")
-        # 개행은 CSV/XLSX 저장 시 기본적으로 보존됨(따옴표로 감싸짐)
+        # 업로드 시에도 개행 보존 (엑셀/CSV는 기본적으로 따옴표 감싸져 오므로 그대로 저장됨)
         return df[["started_at","ended_at","duration","platform","locale","inquiry_count",
                    "category","description","cause","response","note"]]
 
