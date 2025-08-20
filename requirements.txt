@@ -4,3 +4,5 @@ SQLAlchemy>=2.0
 pymysql>=1.1
 altair>=5.3
 python-dateutil>=2.9
+SQLAlchemy>=2.0
+cryptography>=42.0   # (있으면 더 안전, 일부 환경에서 필요)
