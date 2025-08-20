@@ -1,5 +1,5 @@
 # app_kpi_multiline.py
-# KPI 카드 + 필터 + 업로드/삭제 + 표/상세 줄바꿈 표시
+# KPI 카드 + 필터 + 업로드/삭제 + 표/상세 줄바꿈 표시 + 목록선택→상세 토글
 
 import os
 import pandas as pd
@@ -15,9 +15,10 @@ st.caption("KPI 카드 · 필터 · 업로드/삭제 관리 · 줄바꿈 표시"
 # --- 셀에서 줄바꿈 보존 (표/에디터/툴팁 모두) ---
 st.markdown("""
 <style>
+/* 데이터 에디터/프레임 셀에서 줄바꿈 보존 */
 [data-testid="stDataFrame"] div[role="gridcell"],
 [data-testid="stDataEditor"] div[role="gridcell"]{
-  white-space: pre-wrap !important;   /* \\n 표시 */
+  white-space: pre-wrap !important;
   line-height: 1.3;
 }
 </style>
@@ -64,9 +65,15 @@ engine = get_engine()
 @st.cache_data(ttl=180, show_spinner=False)
 def get_distinct_values():
     with engine.connect() as conn:
-        platforms = pd.read_sql(text("SELECT DISTINCT platform FROM incidents WHERE platform<>'' AND platform IS NOT NULL ORDER BY platform"), conn)["platform"].tolist()
-        locales   = pd.read_sql(text("SELECT DISTINCT locale   FROM incidents WHERE locale<>''   AND locale   IS NOT NULL ORDER BY locale"), conn)["locale"].tolist()
-        cats      = pd.read_sql(text("SELECT DISTINCT category FROM incidents WHERE category<>'' AND category IS NOT NULL ORDER BY category"), conn)["category"].tolist()
+        platforms = pd.read_sql(text(
+            "SELECT DISTINCT platform FROM incidents WHERE platform<>'' AND platform IS NOT NULL ORDER BY platform"
+        ), conn)["platform"].tolist()
+        locales   = pd.read_sql(text(
+            "SELECT DISTINCT locale FROM incidents WHERE locale<>''   AND locale   IS NOT NULL ORDER BY locale"
+        ), conn)["locale"].tolist()
+        cats      = pd.read_sql(text(
+            "SELECT DISTINCT category FROM incidents WHERE category<>'' AND category IS NOT NULL ORDER BY category"
+        ), conn)["category"].tolist()
     return platforms, locales, cats
 
 PLATFORMS, LOCALES, CATEGORIES = get_distinct_values()
@@ -104,20 +111,31 @@ where_sql = " AND ".join(where)
 @st.cache_data(ttl=90, show_spinner=False)
 def fetch_kpis(where_sql: str, params: dict):
     with engine.connect() as conn:
-        total = pd.read_sql(text(f"SELECT COUNT(*) cnt FROM incidents i WHERE {where_sql}"), conn, params=params)["cnt"].iloc[0]
+        total = pd.read_sql(text(f"SELECT COUNT(*) cnt FROM incidents i WHERE {where_sql}"),
+                            conn, params=params)["cnt"].iloc[0]
         tparams = dict(params)
         tparams["date_from"] = datetime.combine(datetime.now().date(), datetime.min.time())
         tparams["date_to"]   = datetime.combine(datetime.now().date(), datetime.max.time())
-        today_cnt = pd.read_sql(text(f"SELECT COUNT(*) cnt FROM incidents i WHERE {where_sql}"), conn, params=tparams)["cnt"].iloc[0]
-        top_cat_df = pd.read_sql(text(f"SELECT i.category, COUNT(*) cnt FROM incidents i WHERE {where_sql} GROUP BY i.category ORDER BY cnt DESC LIMIT 1"), conn, params=params)
+        today_cnt = pd.read_sql(text(f"SELECT COUNT(*) cnt FROM incidents i WHERE {where_sql}"),
+                                conn, params=tparams)["cnt"].iloc[0]
+        top_cat_df = pd.read_sql(text(
+            f"SELECT i.category, COUNT(*) cnt FROM incidents i WHERE {where_sql} "
+            "GROUP BY i.category ORDER BY cnt DESC LIMIT 1"
+        ), conn, params=params)
         top_cat = (top_cat_df["category"].iloc[0], int(top_cat_df["cnt"].iloc[0])) if not top_cat_df.empty else ("-", 0)
-        plat_df = pd.read_sql(text(f"SELECT i.platform, COUNT(*) cnt FROM incidents i WHERE {where_sql} GROUP BY i.platform ORDER BY cnt DESC"), conn, params=params)
+        plat_df = pd.read_sql(text(
+            f"SELECT i.platform, COUNT(*) cnt FROM incidents i WHERE {where_sql} "
+            "GROUP BY i.platform ORDER BY cnt DESC"
+        ), conn, params=params)
     return total, today_cnt, top_cat, plat_df
 
 @st.cache_data(ttl=90, show_spinner=False)
 def fetch_timeseries(where_sql: str, params: dict) -> pd.DataFrame:
     with engine.connect() as conn:
-        return pd.read_sql(text(f"SELECT DATE(i.started_at) d, COUNT(*) cnt FROM incidents i WHERE {where_sql} GROUP BY DATE(i.started_at) ORDER BY d"), conn, params=params)
+        return pd.read_sql(text(
+            f"SELECT DATE(i.started_at) d, COUNT(*) cnt FROM incidents i WHERE {where_sql} "
+            "GROUP BY DATE(i.started_at) ORDER BY d"
+        ), conn, params=params)
 
 @st.cache_data(ttl=90, show_spinner=False)
 def fetch_list(where_sql: str, params: dict, limit: int) -> pd.DataFrame:
@@ -135,7 +153,7 @@ def fetch_list(where_sql: str, params: dict, limit: int) -> pd.DataFrame:
     if not df.empty:
         df["started_at"] = pd.to_datetime(df["started_at"]).dt.strftime("%Y-%m-%d %H:%M")
         df["ended_at"]   = df["ended_at"].apply(lambda x: "" if pd.isna(x) else pd.to_datetime(x).strftime("%Y-%m-%d %H:%M"))
-        # ★ 개행 정규화 (윈도우 \r\n → \n) : 표에서 줄바꿈 보이도록
+        # ★ 개행 정규화 (윈도우 \r\n → \n)
         for col in ["description", "cause", "response", "note"]:
             if col in df.columns:
                 df[col] = df[col].astype(str).str.replace("\r\n", "\n").str.replace("\r", "\n")
@@ -177,55 +195,87 @@ else:
         use_container_width=True
     )
 
-# ---------------------------
-# 목록 (줄바꿈 보이는 표)
-# ---------------------------
+# -----------------------------------------------------------------------------
+# 목록 (줄바꿈 보이는 표) + 체크박스 선택 → 상세 보기 토글
+# -----------------------------------------------------------------------------
 st.subheader("📄 사건 목록 (줄바꿈 표시)")
+
+if "selected_id" not in st.session_state:
+    st.session_state.selected_id = None
+
 list_df = fetch_list(where_sql, params, int(limit))
 if list_df.empty:
     st.info("조건에 맞는 데이터가 없습니다.")
 else:
-    st.data_editor(
-        list_df,
+    # 선택용 체크박스 컬럼 추가 (맨 앞)
+    show_df = list_df.copy()
+    show_df.insert(0, "_sel", False)
+    if st.session_state.selected_id is not None:
+        show_df.loc[show_df["id"] == st.session_state.selected_id, "_sel"] = True
+
+    edited = st.data_editor(
+        show_df,
         use_container_width=True,
         height=420,
         hide_index=True,
-        disabled=True,
         column_config={
+            "_sel": st.column_config.CheckboxColumn(
+                "선택", help="행을 체크하면 아래 상세가 표시됩니다.", default=False
+            ),
             "description": st.column_config.TextColumn("description", width="medium"),
             "cause":       st.column_config.TextColumn("cause",       width="large"),
             "response":    st.column_config.TextColumn("response",    width="large"),
             "note":        st.column_config.TextColumn("note",        width="medium"),
         },
+        disabled=[c for c in show_df.columns if c != "_sel"],  # 내용 편집은 막고 선택만 가능
     )
 
+    # 현재 체크된 행(여러 개 체크되면 마지막 행만 사용)
+    checked_ids = edited.loc[edited["_sel"], "id"].tolist()
+    if len(checked_ids) == 0:
+        if st.session_state.selected_id is not None:
+            st.session_state.selected_id = None
+    else:
+        new_sel = int(checked_ids[-1])
+        if st.session_state.selected_id != new_sel:
+            st.session_state.selected_id = new_sel
+
 # ---------------------------
-# 상세 보기 (줄바꿈 유지)
+# 상세 보기 (선택 전에는 비노출)
 # ---------------------------
-if not list_df.empty:
-    st.markdown("---")
-    st.subheader("🔎 상세 보기")
-    sel_id = st.selectbox("Incident 선택", options=list_df["id"].tolist())
-    if sel_id:
-        with engine.connect() as conn:
-            detail = pd.read_sql(text("SELECT * FROM incidents WHERE id=:id"), conn, params={"id": int(sel_id)})
-        if not detail.empty:
-            row = detail.iloc[0]
-            st.write(f"**ID**: {int(row['id'])}")
-            st.write(f"**시작**: {row['started_at']}")
-            st.write(f"**종료**: {row['ended_at']}")
-            st.write(f"**장애시간**: {row.get('duration','')}")
-            st.write(f"**플랫폼/로케일**: {row.get('platform','')} / {row.get('locale','')}")
-            st.write(f"**문의량**: {row.get('inquiry_count','')}")
-            st.write(f"**카테고리**: {row.get('category','')}")
-            st.markdown("**장애내용**")
-            st.markdown(f"<div style='white-space:pre-wrap'>{row.get('description','') or ''}</div>", unsafe_allow_html=True)
-            st.markdown("**원인**")
-            st.markdown(f"<div style='white-space:pre-wrap'>{row.get('cause','') or ''}</div>", unsafe_allow_html=True)
-            st.markdown("**대응**")
-            st.markdown(f"<div style='white-space:pre-wrap'>{row.get('response','') or ''}</div>", unsafe_allow_html=True)
-            st.markdown("**비고**")
-            st.markdown(f"<div style='white-space:pre-wrap'>{row.get('note','') or ''}</div>", unsafe_allow_html=True)
+st.markdown("---")
+st.subheader("🔎 상세 보기")
+
+if st.session_state.selected_id is None:
+    st.caption("위 ‘사건 목록’에서 행을 체크하면 상세가 여기에 표시됩니다.")
+else:
+    with engine.connect() as conn:
+        detail = pd.read_sql(text("SELECT * FROM incidents WHERE id=:id"),
+                             conn, params={"id": st.session_state.selected_id})
+    if detail.empty:
+        st.info("해당 ID의 데이터가 없습니다.")
+    else:
+        row = detail.iloc[0]
+        st.write(f"**ID**: {int(row['id'])}")
+        st.write(f"**시작**: {row.get('started_at','')}")
+        st.write(f"**종료**: {row.get('ended_at','')}")
+        st.write(f"**장애시간**: {row.get('duration','')}")
+        st.write(f"**플랫폼/로케일**: {row.get('platform','')} / {row.get('locale','')}")
+        st.write(f"**문의량**: {row.get('inquiry_count','')}")
+        st.write(f"**카테고리**: {row.get('category','')}")
+        st.markdown("**장애내용**")
+        st.markdown(f"<div style='white-space:pre-wrap'>{row.get('description','') or ''}</div>", unsafe_allow_html=True)
+        st.markdown("**원인**")
+        st.markdown(f"<div style='white-space:pre-wrap'>{row.get('cause','') or ''}</div>", unsafe_allow_html=True)
+        st.markdown("**대응**")
+        st.markdown(f"<div style='white-space:pre-wrap'>{row.get('response','') or ''}</div>", unsafe_allow_html=True)
+        st.markdown("**비고**")
+        st.markdown(f"<div style='white-space:pre-wrap'>{row.get('note','') or ''}</div>", unsafe_allow_html=True)
+
+        # 선택 해제(토글 끄기)
+        if st.button("선택 해제 / 상세 닫기", use_container_width=True):
+            st.session_state.selected_id = None
+            st.experimental_rerun()
 
 # ---------------------------
 # 관리: 선택 삭제
@@ -266,7 +316,6 @@ with st.expander("⬆️ 관리: 업로드 (CSV/XLSX)"):
         missing = [c for c in required if c not in df.columns]
         if missing:
             raise ValueError(f"필수 컬럼 누락: {missing}")
-        # 업로드 시에도 개행 보존 (엑셀/CSV는 기본적으로 따옴표 감싸져 오므로 그대로 저장됨)
         return df[["started_at","ended_at","duration","platform","locale","inquiry_count",
                    "category","description","cause","response","note"]]
 
