@@ -1,23 +1,5 @@
-# app_kpi.py
-# Streamlit KPI 카드형 대시보드 + 필터 + 업로드/삭제 (MySQL RDS)
-# ---------------------------------------------------------------
-# Secrets(.streamlit/secrets.toml 또는 Cloud Secrets) 예시:
-# [db]                               # 또는 [DB] 로 올려도 됨
-# HOST = "my-db-7.c7s06yiach58.ap-northeast-2.rds.amazonaws.com"  # DB_HOST
-# PORT = 3306                                                             # DB_PORT
-# USER = "admin"                                                          # DB_USER
-# PASSWORD = "qwer4321!!K"                                               # DB_PASSWORD
-# NAME = "mydata"                                                         # DB_NAME
-#
-# requirements.txt (핵심)
-# streamlit>=1.36
-# pandas>=2.2
-# SQLAlchemy>=2.0
-# pymysql>=1.1
-# altair>=5.3
-# python-dateutil>=2.9
-# cryptography>=42.0
-# ---------------------------------------------------------------
+# app_kpi_multiline.py
+# KPI 카드 + 필터 + 업로드/삭제 + 표/상세 줄바꿈 표시
 
 import os
 import pandas as pd
@@ -28,7 +10,18 @@ from sqlalchemy import create_engine, text
 
 st.set_page_config(page_title="장애 현황 대시보드", page_icon="📊", layout="wide")
 st.title("📊 장애 현황 대시보드")
-st.caption("KPI 카드 · 필터 · 업로드/삭제 관리")
+st.caption("KPI 카드 · 필터 · 업로드/삭제 관리 · 줄바꿈 표시")
+
+# --- 셀에서 줄바꿈 보존 (표/에디터/툴팁 모두) ---
+st.markdown("""
+<style>
+[data-testid="stDataFrame"] div[role="gridcell"],
+[data-testid="stDataEditor"] div[role="gridcell"]{
+  white-space: pre-wrap !important;   /* \\n 표시 */
+  line-height: 1.3;
+}
+</style>
+""", unsafe_allow_html=True)
 
 # ---------------------------
 # DB 연결 (Secrets 읽기 + SSL 강제)
@@ -36,17 +29,14 @@ st.caption("KPI 카드 · 필터 · 업로드/삭제 관리")
 @st.cache_resource(show_spinner=False)
 def get_engine():
     s = st.secrets
-    cfg = {}
     if "db" in s:
-        cfg = s["db"]
-        host = cfg.get("HOST") or cfg.get("host")
+        cfg = s["db"];  host = cfg.get("HOST") or cfg.get("host")
         port = int(cfg.get("PORT") or cfg.get("port") or 3306)
         user = cfg.get("USER") or cfg.get("user")
         pw   = cfg.get("PASSWORD") or cfg.get("password")
         name = cfg.get("NAME") or cfg.get("name")
     elif "DB" in s:
-        cfg = s["DB"]
-        host = cfg.get("DB_HOST") or cfg.get("HOST")
+        cfg = s["DB"];  host = cfg.get("DB_HOST") or cfg.get("HOST")
         port = int(cfg.get("DB_PORT") or cfg.get("PORT") or 3306)
         user = cfg.get("DB_USER") or cfg.get("USER")
         pw   = cfg.get("DB_PASSWORD") or cfg.get("PASSWORD")
@@ -56,45 +46,27 @@ def get_engine():
         user = os.getenv("DB_USER"); pw = os.getenv("DB_PASSWORD"); name = os.getenv("DB_NAME")
 
     if not all([host, user, pw, name]):
-        st.error("DB secrets가 없습니다. [db] 또는 [DB] 섹션으로 HOST/PORT/USER/PASSWORD/NAME를 등록하세요.")
+        st.error("DB secrets가 없습니다. [db] 또는 [DB] 섹션으로 HOST/PORT/USER/PASSWORD/NAME을 등록하세요.")
         st.stop()
 
-    # SQLAlchemy URL
     url = f"mysql+pymysql://{user}:{pw}@{host}:{port}/{name}?charset=utf8mb4"
-
-    # 핵심: MySQL 8 (caching_sha2_password)에서 TLS 없으면 인증 실패 → ssl 강제
-    connect_args = {"ssl": {"ssl": True}}
-
-    try:
-        eng = create_engine(url, pool_pre_ping=True, connect_args=connect_args)
-        # 미리 연결 확인
-        with eng.connect() as conn:
-            conn.execute(text("SELECT 1"))
-        return eng
-    except Exception as e:
-        st.error(f"DB 연결 실패: {e}")
-        st.stop()
+    connect_args = {"ssl": {"ssl": True}}  # MySQL8 인증 이슈 방지
+    eng = create_engine(url, pool_pre_ping=True, connect_args=connect_args)
+    with eng.connect() as conn:
+        conn.execute(text("SELECT 1"))
+    return eng
 
 engine = get_engine()
 
 # ---------------------------
-# 유틸 / 쿼리
+# 쿼리 유틸
 # ---------------------------
 @st.cache_data(ttl=180, show_spinner=False)
 def get_distinct_values():
     with engine.connect() as conn:
-        platforms = pd.read_sql(text(
-            "SELECT DISTINCT platform FROM incidents "
-            "WHERE platform IS NOT NULL AND platform<>'' ORDER BY platform"
-        ), conn)["platform"].tolist()
-        locales = pd.read_sql(text(
-            "SELECT DISTINCT locale FROM incidents "
-            "WHERE locale IS NOT NULL AND locale<>'' ORDER BY locale"
-        ), conn)["locale"].tolist()
-        cats = pd.read_sql(text(
-            "SELECT DISTINCT category FROM incidents "
-            "WHERE category IS NOT NULL AND category<>'' ORDER BY category"
-        ), conn)["category"].tolist()
+        platforms = pd.read_sql(text("SELECT DISTINCT platform FROM incidents WHERE platform<>'' AND platform IS NOT NULL ORDER BY platform"), conn)["platform"].tolist()
+        locales   = pd.read_sql(text("SELECT DISTINCT locale   FROM incidents WHERE locale<>''   AND locale   IS NOT NULL ORDER BY locale"), conn)["locale"].tolist()
+        cats      = pd.read_sql(text("SELECT DISTINCT category FROM incidents WHERE category<>'' AND category IS NOT NULL ORDER BY category"), conn)["category"].tolist()
     return platforms, locales, cats
 
 PLATFORMS, LOCALES, CATEGORIES = get_distinct_values()
@@ -105,8 +77,7 @@ PLATFORMS, LOCALES, CATEGORIES = get_distinct_values()
 with st.sidebar:
     st.header("필터")
     today = datetime.now().date()
-    default_from = today - timedelta(days=30)
-    date_from, date_to = st.date_input("기간(started_at)", value=(default_from, today))
+    date_from, date_to = st.date_input("기간(started_at)", value=(today - timedelta(days=30), today))
     if isinstance(date_from, tuple):  # 안전장치
         date_from, date_to = date_from
 
@@ -116,7 +87,6 @@ with st.sidebar:
     keyword = st.text_input("키워드(내용/원인/대응/비고)")
     limit = st.number_input("목록 행수", min_value=50, max_value=5000, value=500, step=50)
 
-# WHERE 구성
 params = {"date_from": datetime.combine(date_from, datetime.min.time()),
           "date_to":   datetime.combine(date_to,   datetime.max.time())}
 where = ["i.started_at BETWEEN :date_from AND :date_to"]
@@ -139,21 +109,15 @@ def fetch_kpis(where_sql: str, params: dict):
         tparams["date_from"] = datetime.combine(datetime.now().date(), datetime.min.time())
         tparams["date_to"]   = datetime.combine(datetime.now().date(), datetime.max.time())
         today_cnt = pd.read_sql(text(f"SELECT COUNT(*) cnt FROM incidents i WHERE {where_sql}"), conn, params=tparams)["cnt"].iloc[0]
-        top_cat_df = pd.read_sql(text(
-            f"SELECT i.category, COUNT(*) cnt FROM incidents i WHERE {where_sql} GROUP BY i.category ORDER BY cnt DESC LIMIT 1"
-        ), conn, params=params)
+        top_cat_df = pd.read_sql(text(f"SELECT i.category, COUNT(*) cnt FROM incidents i WHERE {where_sql} GROUP BY i.category ORDER BY cnt DESC LIMIT 1"), conn, params=params)
         top_cat = (top_cat_df["category"].iloc[0], int(top_cat_df["cnt"].iloc[0])) if not top_cat_df.empty else ("-", 0)
-        plat_df = pd.read_sql(text(
-            f"SELECT i.platform, COUNT(*) cnt FROM incidents i WHERE {where_sql} GROUP BY i.platform ORDER BY cnt DESC"
-        ), conn, params=params)
+        plat_df = pd.read_sql(text(f"SELECT i.platform, COUNT(*) cnt FROM incidents i WHERE {where_sql} GROUP BY i.platform ORDER BY cnt DESC"), conn, params=params)
     return total, today_cnt, top_cat, plat_df
 
 @st.cache_data(ttl=90, show_spinner=False)
 def fetch_timeseries(where_sql: str, params: dict) -> pd.DataFrame:
     with engine.connect() as conn:
-        return pd.read_sql(text(
-            f"SELECT DATE(i.started_at) d, COUNT(*) cnt FROM incidents i WHERE {where_sql} GROUP BY DATE(i.started_at) ORDER BY d"
-        ), conn, params=params)
+        return pd.read_sql(text(f"SELECT DATE(i.started_at) d, COUNT(*) cnt FROM incidents i WHERE {where_sql} GROUP BY DATE(i.started_at) ORDER BY d"), conn, params=params)
 
 @st.cache_data(ttl=90, show_spinner=False)
 def fetch_list(where_sql: str, params: dict, limit: int) -> pd.DataFrame:
@@ -171,6 +135,10 @@ def fetch_list(where_sql: str, params: dict, limit: int) -> pd.DataFrame:
     if not df.empty:
         df["started_at"] = pd.to_datetime(df["started_at"]).dt.strftime("%Y-%m-%d %H:%M")
         df["ended_at"]   = df["ended_at"].apply(lambda x: "" if pd.isna(x) else pd.to_datetime(x).strftime("%Y-%m-%d %H:%M"))
+        # ★ 개행 정규화 (윈도우 \r\n → \n) : 표에서 줄바꿈 보이도록
+        for col in ["description", "cause", "response", "note"]:
+            if col in df.columns:
+                df[col] = df[col].astype(str).str.replace("\r\n", "\n").str.replace("\r", "\n")
     return df
 
 # ---------------------------
@@ -210,14 +178,54 @@ else:
     )
 
 # ---------------------------
-# 목록
+# 목록 (줄바꿈 보이는 표)
 # ---------------------------
-st.subheader("📄 사건 목록")
+st.subheader("📄 사건 목록 (줄바꿈 표시)")
 list_df = fetch_list(where_sql, params, int(limit))
 if list_df.empty:
     st.info("조건에 맞는 데이터가 없습니다.")
 else:
-    st.dataframe(list_df, use_container_width=True, height=420)
+    st.data_editor(
+        list_df,
+        use_container_width=True,
+        height=420,
+        hide_index=True,
+        disabled=True,
+        column_config={
+            "description": st.column_config.TextColumn("description", width="medium"),
+            "cause":       st.column_config.TextColumn("cause",       width="large"),
+            "response":    st.column_config.TextColumn("response",    width="large"),
+            "note":        st.column_config.TextColumn("note",        width="medium"),
+        },
+    )
+
+# ---------------------------
+# 상세 보기 (줄바꿈 유지)
+# ---------------------------
+if not list_df.empty:
+    st.markdown("---")
+    st.subheader("🔎 상세 보기")
+    sel_id = st.selectbox("Incident 선택", options=list_df["id"].tolist())
+    if sel_id:
+        with engine.connect() as conn:
+            detail = pd.read_sql(text("SELECT * FROM incidents WHERE id=:id"), conn, params={"id": int(sel_id)})
+        if not detail.empty:
+            row = detail.iloc[0]
+            st.write(f"**ID**: {int(row['id'])}")
+            st.write(f"**시작**: {row['started_at']}")
+            st.write(f"**종료**: {row['ended_at']}")
+            st.write(f"**장애시간**: {row.get('duration','')}")
+            st.write(f"**플랫폼/로케일**: {row.get('platform','')} / {row.get('locale','')}")
+            st.write(f"**문의량**: {row.get('inquiry_count','')}")
+            st.write(f"**카테고리**: {row.get('category','')}")
+            st.markdown("**장애내용**")
+            st.markdown(f"<div style='white-space:pre-wrap'>{row.get('description','') or ''}</div>", unsafe_allow_html=True)
+            st.markdown("**원인**")
+            st.markdown(f"<div style='white-space:pre-wrap'>{row.get('cause','') or ''}</div>", unsafe_allow_html=True)
+            st.markdown("**대응**")
+            st.markdown(f"<div style='white-space:pre-wrap'>{row.get('response','') or ''}</div>", unsafe_allow_html=True)
+            st.markdown("**비고**")
+            st.markdown(f"<div style='white-space:pre-wrap'>{row.get('note','') or ''}</div>", unsafe_allow_html=True)
 
 # ---------------------------
 # 관리: 선택 삭제
@@ -245,23 +253,20 @@ with st.expander("⬆️ 관리: 업로드 (CSV/XLSX)"):
     file = st.file_uploader("파일 선택", type=["csv", "xlsx", "xls"])
 
     def normalize_df(df: pd.DataFrame) -> pd.DataFrame:
-        # 컬럼 정규화
         df.columns = [str(c).strip().lower() for c in df.columns]
-        # 날짜 파싱
         for dt in ["started_at", "ended_at"]:
             if dt in df.columns:
                 df[dt] = pd.to_datetime(df[dt], errors="coerce")
         if "inquiry_count" in df.columns:
             df["inquiry_count"] = pd.to_numeric(df["inquiry_count"], errors="coerce")
-        # 누락 채우기
         for col in ["ended_at","duration","platform","locale","inquiry_count","cause","response","note"]:
             if col not in df.columns:
                 df[col] = None
-        # 필수 확인
         required = ["started_at", "category", "description"]
         missing = [c for c in required if c not in df.columns]
         if missing:
             raise ValueError(f"필수 컬럼 누락: {missing}")
+        # 업로드 시에도 개행 보존 (엑셀/CSV는 기본적으로 따옴표 감싸져 오므로 그대로 저장됨)
         return df[["started_at","ended_at","duration","platform","locale","inquiry_count",
                    "category","description","cause","response","note"]]
 
