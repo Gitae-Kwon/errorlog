@@ -216,13 +216,38 @@ with col_chart:
                         use_container_width=True)
 
 with col_kpi:
-    try:
-        total, today_cnt, (top_cat_name, top_cat_cnt) = fetch_kpis(where_sql, params)
-        st.metric("총 건수", f"{total:,}")
-        st.metric("오늘 건수", f"{today_cnt:,}")
-        st.metric("최다 카테고리", top_cat_name, delta=f"{top_cat_cnt:,}건")
-    except Exception as e:
-        st.warning(f"KPI 로딩 오류: {e}")
+    st.subheader("📊 요약 지표")
+
+    st.markdown(
+        f"""
+        <div style="text-align:center">
+            <h4>총 건수</h4>
+            <h2>{total:,}</h2>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
+    st.markdown(
+        f"""
+        <div style="text-align:center">
+            <h4>오늘 건수</h4>
+            <h2>{today_cnt:,}</h2>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
+    st.markdown(
+        f"""
+        <div style="text-align:center">
+            <h4>최다 카테고리</h4>
+            <h2>{top_cat_name}</h2>
+            <p>{top_cat_cnt:,}건</p>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
 
 # ---------------------------
 # 일별 추이
