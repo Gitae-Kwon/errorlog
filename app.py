@@ -180,10 +180,19 @@ if keyword.strip():
 where_sql = " AND ".join(where)
 
 # ===========================
-# 상단 요약: (좌) 카테고리 그래프 / (우) KPI 카드 (가로 배치)
+# 상단 요약: (좌) 카테고리 그래프 / (우) KPI 카드(가로 3개, 높이 컴팩트)
 # ===========================
 st.subheader("상단 요약")
 
+# 1) KPI 값 먼저 계산
+total, today_cnt, top_cat_name, top_cat_cnt = 0, 0, "-", 0
+try:
+    _t, _td, (cat_name, cat_cnt) = fetch_kpis(where_sql, params)
+    total, today_cnt, top_cat_name, top_cat_cnt = int(_t), int(_td), str(cat_name), int(cat_cnt)
+except Exception as e:
+    st.warning(f"KPI 로딩 오류: {e}")
+
+# 2) 좌/우 영역 (왼쪽 그래프, 오른쪽 KPI) — 비율은 2:1 (원하면 [1,1]로 조정)
 col_chart, col_kpi = st.columns([2, 1])
 
 with col_chart:
@@ -211,25 +220,28 @@ with col_chart:
             align='left', baseline='middle', dx=4, fontSize=12, color='white'
         ).encode(text=alt.Text("cnt:Q", format=",.0f"))
 
-        st.altair_chart((bars + labels).properties(height=28 * len(plot_df), width="container"),
-                        use_container_width=True)
+        st.altair_chart(
+            (bars + labels).properties(height=28 * len(plot_df), width="container"),
+            use_container_width=True
+        )
 
 with col_kpi:
+    # 3) KPI 카드 — 가로로 3등분해서 그래프 높이에 맞게 컴팩트하게 표시
     st.markdown(
         """
         <style>
-        .kpi-grid{display:flex; gap:8px;}
-        .kpi-card{
-            flex:1;
-            text-align:center;
-            border:1px solid rgba(255,255,255,0.15);
-            border-radius:10px;
-            padding:8px;
-            background:rgba(255,255,255,0.03);
-        }
-        .kpi-title{ font-size:14px; margin:0; opacity:0.85; }
-        .kpi-value{ font-size:22px; margin:4px 0; font-weight:700; }
-        .kpi-sub{ font-size:12px; opacity:0.7; }
+          .kpi-grid{display:flex; gap:8px;}
+          .kpi-card{
+              flex:1;
+              text-align:center;
+              border:1px solid rgba(255,255,255,0.15);
+              border-radius:10px;
+              padding:8px 6px;
+              background:rgba(255,255,255,0.03);
+          }
+          .kpi-title{ font-size:14px; margin:0; opacity:0.85; }
+          .kpi-value{ font-size:22px; margin:4px 0; font-weight:700; }
+          .kpi-sub{ font-size:12px; opacity:0.7; margin-top:-2px; }
         </style>
         """,
         unsafe_allow_html=True
