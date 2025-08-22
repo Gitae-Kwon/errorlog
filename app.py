@@ -193,7 +193,7 @@ except Exception as e:
     st.warning(f"KPI 로딩 오류: {e}")
 
 # 2) 좌/우 영역 (왼쪽 그래프, 오른쪽 KPI) — 비율은 2:1 (원하면 [1,1]로 조정)
-col_chart, col_kpi = st.columns([2, 1])
+col_chart, col_kpi = st.columns([1, 1])
 
 with col_chart:
     cat_df = fetch_category_counts(where_sql, params)
