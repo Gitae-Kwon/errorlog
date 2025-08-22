@@ -1,5 +1,9 @@
-# app_kpi_master_detail_with_category_chart.py
-# KPI 카드 + 필터 + 업로드/삭제 + 마스터/디테일(행 클릭) + 카테고리 막대(색상+라벨)
+# app_topcombo_master_detail.py
+# 상단: (좌) 카테고리 차트 + (우) KPI
+# 목록: 마스터/디테일(행 클릭으로 상세 펼침)
+# 날짜: 시작/종료일 개별 입력
+# 관리컬럼: created_at / updated_at 숨김
+# 차트: 색상+라벨 표시
 
 import os
 import pandas as pd
@@ -11,7 +15,7 @@ from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode, JsCode
 
 st.set_page_config(page_title="장애 현황 대시보드", page_icon="📊", layout="wide")
 st.title("📊 장애 현황 대시보드")
-st.caption("KPI 카드 · 필터 · 업로드/삭제 관리 · 마스터/디테일(행 클릭) · 카테고리 막대(색상+라벨)")
+st.caption("상단: 카테고리 차트 + KPI · 목록: 행 클릭 상세 · 업로드/삭제 관리")
 
 # --- 표/에디터 셀 줄바꿈 보존 ---
 st.markdown(
@@ -94,11 +98,7 @@ def fetch_kpis(where_sql: str, params: dict):
             "GROUP BY i.category ORDER BY cnt DESC LIMIT 1"
         ), conn, params=params)
         top_cat = (top_cat_df["category"].iloc[0], int(top_cat_df["cnt"].iloc[0])) if not top_cat_df.empty else ("-", 0)
-        plat_df = pd.read_sql(text(
-            f"SELECT i.platform, COUNT(*) cnt FROM incidents i WHERE {where_sql} "
-            "GROUP BY i.platform ORDER BY cnt DESC"
-        ), conn, params=params)
-    return total, today_cnt, top_cat, plat_df
+    return total, today_cnt, top_cat
 
 @st.cache_data(ttl=90, show_spinner=False)
 def fetch_timeseries(where_sql: str, params: dict) -> pd.DataFrame:
@@ -179,58 +179,50 @@ if keyword.strip():
     params["kw"] = f"%{keyword.strip()}%"
 where_sql = " AND ".join(where)
 
-# ---------------------------
-# KPI 카드
-# ---------------------------
-try:
-    total, today_cnt, (top_cat_name, top_cat_cnt), plat_df = fetch_kpis(where_sql, params)
-    c1, c2, c3 = st.columns([1,1,1])
-    c1.metric("총 건수", f"{total:,}")
-    c2.metric("오늘 건수", f"{today_cnt:,}")
-    c3.metric("최다 카테고리", top_cat_name, delta=f"{top_cat_cnt:,}건")
-except Exception as e:
-    st.warning(f"KPI 로딩 오류: {e}")
+# ===========================
+# 상단 레이아웃: (좌) 카테고리 차트 / (우) KPI
+# ===========================
+st.subheader("상단 요약")
+col_chart, col_kpi = st.columns([2, 1])
 
-# ---------------------------
-# 카테고리별 통계 (총건수 + 가로바, 위: 총건수 / 아래: 최소 건수)
-# ---------------------------
-st.subheader("📊 카테고리별 통계 (총건수 상단, 최소 건수 하단)")
+with col_chart:
+    cat_df = fetch_category_counts(where_sql, params)
+    if cat_df.empty:
+        st.info("카테고리 데이터가 없습니다.")
+    else:
+        total_df = pd.DataFrame([{"category": "총건수", "cnt": int(cat_df["cnt"].sum())}])
+        cat_sorted = cat_df.sort_values("cnt", ascending=False).reset_index(drop=True)
+        order = ["총건수"] + cat_sorted["category"].tolist()
+        plot_df = pd.concat([total_df, cat_sorted], ignore_index=True)
 
-cat_df = fetch_category_counts(where_sql, params)
-if cat_df.empty:
-    st.info("카테고리 데이터가 없습니다.")
-else:
-    total_df = pd.DataFrame([{"category": "총건수", "cnt": int(cat_df["cnt"].sum())}])
-    cat_sorted = cat_df.sort_values("cnt", ascending=False).reset_index(drop=True)
-    order = ["총건수"] + cat_sorted["category"].tolist()
-    plot_df = pd.concat([total_df, cat_sorted], ignore_index=True)
+        base = alt.Chart(plot_df).encode(
+            y=alt.Y("category:N", sort=order, title=""),
+            x=alt.X("cnt:Q", title="건수")
+        )
+        bars = base.mark_bar().encode(
+            color=alt.Color(
+                "category:N",
+                legend=None,
+                scale=alt.Scale(range=['#3b82f6'] + ['#60a5fa'] * (len(plot_df)-1))  # 총건수 진한 파랑, 나머지 연한 파랑
+            ),
+            tooltip=[alt.Tooltip("category:N", title="구분"), alt.Tooltip("cnt:Q", title="건수")]
+        )
+        labels = base.mark_text(
+            align='left', baseline='middle', dx=4, fontSize=12, color='white'
+        ).encode(
+            text=alt.Text("cnt:Q", format=",.0f")
+        )
+        st.altair_chart((bars + labels).properties(height=28 * len(plot_df), width="container"),
+                        use_container_width=True)
 
-    # 가로 막대 + 라벨(막대 끝에 건수 표시)
-    base = alt.Chart(plot_df).encode(
-        y=alt.Y("category:N", sort=order, title=""),
-        x=alt.X("cnt:Q", title="건수")
-    )
-
-    bars = base.mark_bar().encode(
-        color=alt.Color(
-            "category:N",
-            legend=None,
-            scale=alt.Scale(range=['#3b82f6'] + ['#60a5fa'] * (len(plot_df)-1))  # 총건수 진한색, 나머지 연한색
-        ),
-        tooltip=[alt.Tooltip("category:N", title="구분"), alt.Tooltip("cnt:Q", title="건수")]
-    )
-
-    labels = base.mark_text(
-        align='left',
-        baseline='middle',
-        dx=4,
-        fontSize=12,
-        color='white'
-    ).encode(
-        text=alt.Text("cnt:Q", format=",.0f")
-    )
-
-    st.altair_chart((bars + labels).properties(height=28 * len(plot_df), width="container"), use_container_width=True)
+with col_kpi:
+    try:
+        total, today_cnt, (top_cat_name, top_cat_cnt) = fetch_kpis(where_sql, params)
+        st.metric("총 건수", f"{total:,}")
+        st.metric("오늘 건수", f"{today_cnt:,}")
+        st.metric("최다 카테고리", top_cat_name, delta=f"{top_cat_cnt:,}건")
+    except Exception as e:
+        st.warning(f"KPI 로딩 오류: {e}")
 
 # ---------------------------
 # 일별 추이
