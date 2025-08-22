@@ -1,5 +1,5 @@
-# app_kpi_multiline.py
-# KPI 카드 + 필터 + 업로드/삭제 + 표/상세 줄바꿈 표시 + 목록선택→상세 토글
+# app_kpi_rowselect.py
+# KPI 카드 + 필터 + 업로드/삭제 + 표/상세 줄바꿈 표시 + (체크박스 X) 행 선택으로 상세 보기
 
 import os
 import pandas as pd
@@ -7,22 +7,25 @@ import altair as alt
 import streamlit as st
 from datetime import datetime, timedelta
 from sqlalchemy import create_engine, text
+from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode
 
 st.set_page_config(page_title="장애 현황 대시보드", page_icon="📊", layout="wide")
 st.title("📊 장애 현황 대시보드")
-st.caption("KPI 카드 · 필터 · 업로드/삭제 관리 · 줄바꿈 표시")
+st.caption("KPI 카드 · 필터 · 업로드/삭제 관리 · 줄바꿈 표시 · 행 클릭 선택")
 
 # --- 셀에서 줄바꿈 보존 (표/에디터/툴팁 모두) ---
-st.markdown("""
+st.markdown(
+    """
 <style>
-/* 데이터 에디터/프레임 셀에서 줄바꿈 보존 */
 [data-testid="stDataFrame"] div[role="gridcell"],
 [data-testid="stDataEditor"] div[role="gridcell"]{
   white-space: pre-wrap !important;
   line-height: 1.3;
 }
 </style>
-""", unsafe_allow_html=True)
+""",
+    unsafe_allow_html=True,
+)
 
 # ---------------------------
 # DB 연결 (Secrets 읽기 + SSL 강제)
@@ -51,7 +54,7 @@ def get_engine():
         st.stop()
 
     url = f"mysql+pymysql://{user}:{pw}@{host}:{port}/{name}?charset=utf8mb4"
-    connect_args = {"ssl": {"ssl": True}}  # MySQL8 인증 이슈 방지
+    connect_args = {"ssl": {"ssl": True}}
     eng = create_engine(url, pool_pre_ping=True, connect_args=connect_args)
     with eng.connect() as conn:
         conn.execute(text("SELECT 1"))
@@ -85,7 +88,7 @@ with st.sidebar:
     st.header("필터")
     today = datetime.now().date()
     date_from, date_to = st.date_input("기간(started_at)", value=(today - timedelta(days=30), today))
-    if isinstance(date_from, tuple):  # 안전장치
+    if isinstance(date_from, tuple):
         date_from, date_to = date_from
 
     sel_platforms = st.multiselect("플랫폼", options=PLATFORMS)
@@ -94,8 +97,10 @@ with st.sidebar:
     keyword = st.text_input("키워드(내용/원인/대응/비고)")
     limit = st.number_input("목록 행수", min_value=50, max_value=5000, value=500, step=50)
 
-params = {"date_from": datetime.combine(date_from, datetime.min.time()),
-          "date_to":   datetime.combine(date_to,   datetime.max.time())}
+params = {
+    "date_from": datetime.combine(date_from, datetime.min.time()),
+    "date_to":   datetime.combine(date_to,   datetime.max.time())
+}
 where = ["i.started_at BETWEEN :date_from AND :date_to"]
 if sel_platforms:
     where.append("i.platform IN :platforms");   params["platforms"]  = tuple(sel_platforms)
@@ -153,7 +158,6 @@ def fetch_list(where_sql: str, params: dict, limit: int) -> pd.DataFrame:
     if not df.empty:
         df["started_at"] = pd.to_datetime(df["started_at"]).dt.strftime("%Y-%m-%d %H:%M")
         df["ended_at"]   = df["ended_at"].apply(lambda x: "" if pd.isna(x) else pd.to_datetime(x).strftime("%Y-%m-%d %H:%M"))
-        # ★ 개행 정규화 (윈도우 \r\n → \n)
         for col in ["description", "cause", "response", "note"]:
             if col in df.columns:
                 df[col] = df[col].astype(str).str.replace("\r\n", "\n").str.replace("\r", "\n")
@@ -196,9 +200,9 @@ else:
     )
 
 # -----------------------------------------------------------------------------
-# 목록 (줄바꿈 보이는 표) + 체크박스 선택 → 상세 보기 토글
+# 목록 (줄바꿈 보이는 표) + 행 클릭 → 상세 보기
 # -----------------------------------------------------------------------------
-st.subheader("📄 사건 목록 (줄바꿈 표시)")
+st.subheader("📄 사건 목록 (행 선택)")
 
 if "selected_id" not in st.session_state:
     st.session_state.selected_id = None
@@ -207,38 +211,41 @@ list_df = fetch_list(where_sql, params, int(limit))
 if list_df.empty:
     st.info("조건에 맞는 데이터가 없습니다.")
 else:
-    # 선택용 체크박스 컬럼 추가 (맨 앞)
-    show_df = list_df.copy()
-    show_df.insert(0, "_sel", False)
-    if st.session_state.selected_id is not None:
-        show_df.loc[show_df["id"] == st.session_state.selected_id, "_sel"] = True
+    gb = GridOptionsBuilder.from_dataframe(list_df)
+    gb.configure_selection(selection_mode="single", use_checkbox=False)
+    gb.configure_grid_options(rowHeight=36, suppressRowClickSelection=False)
+    wrap_cols = ["description", "cause", "response", "note"]
+    for col in wrap_cols:
+        if col in list_df.columns:
+            gb.configure_column(
+                col,
+                autoHeight=True,
+                cellStyle={"whiteSpace": "pre-wrap", "lineHeight": "1.3"},
+                width=400 if col in ("cause", "response") else 280,
+            )
+    gb.configure_column("started_at", width=140)
+    gb.configure_column("ended_at",   width=140)
+    gb.configure_column("category",   width=120)
+    gb.configure_column("platform",   width=90)
+    gb.configure_column("locale",     width=70)
 
-    edited = st.data_editor(
-        show_df,
-        use_container_width=True,
+    grid = AgGrid(
+        list_df,
+        gridOptions=gb.build(),
+        theme="streamlit",
         height=420,
-        hide_index=True,
-        column_config={
-            "_sel": st.column_config.CheckboxColumn(
-                "선택", help="행을 체크하면 아래 상세가 표시됩니다.", default=False
-            ),
-            "description": st.column_config.TextColumn("description", width="medium"),
-            "cause":       st.column_config.TextColumn("cause",       width="large"),
-            "response":    st.column_config.TextColumn("response",    width="large"),
-            "note":        st.column_config.TextColumn("note",        width="medium"),
-        },
-        disabled=[c for c in show_df.columns if c != "_sel"],  # 내용 편집은 막고 선택만 가능
+        allow_unsafe_jscode=True,
+        update_mode=GridUpdateMode.SELECTION_CHANGED,
+        enable_enterprise_modules=False,
     )
 
-    # 현재 체크된 행(여러 개 체크되면 마지막 행만 사용)
-    checked_ids = edited.loc[edited["_sel"], "id"].tolist()
-    if len(checked_ids) == 0:
-        if st.session_state.selected_id is not None:
-            st.session_state.selected_id = None
-    else:
-        new_sel = int(checked_ids[-1])
+    sel_rows = grid["selected_rows"]
+    if sel_rows:
+        new_sel = int(sel_rows[0]["id"])
         if st.session_state.selected_id != new_sel:
             st.session_state.selected_id = new_sel
+    else:
+        st.session_state.selected_id = None
 
 # ---------------------------
 # 상세 보기 (선택 전에는 비노출)
@@ -247,7 +254,7 @@ st.markdown("---")
 st.subheader("🔎 상세 보기")
 
 if st.session_state.selected_id is None:
-    st.caption("위 ‘사건 목록’에서 행을 체크하면 상세가 여기에 표시됩니다.")
+    st.caption("위 ‘사건 목록’에서 행을 클릭하면 상세가 여기에 표시됩니다.")
 else:
     with engine.connect() as conn:
         detail = pd.read_sql(text("SELECT * FROM incidents WHERE id=:id"),
@@ -272,7 +279,6 @@ else:
         st.markdown("**비고**")
         st.markdown(f"<div style='white-space:pre-wrap'>{row.get('note','') or ''}</div>", unsafe_allow_html=True)
 
-        # 선택 해제(토글 끄기)
         if st.button("선택 해제 / 상세 닫기", use_container_width=True):
             st.session_state.selected_id = None
             st.experimental_rerun()
