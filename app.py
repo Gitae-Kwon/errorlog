@@ -1,6 +1,6 @@
 # app_kpi_master_detail.py
 # KPI 카드 + 필터 + 업로드/삭제 + 표/상세 줄바꿈 표시
-# ✅ 상세보기 패널 제거, 표에서 행 클릭 시 아래로 펼쳐지는(마스터/디테일) 방식
+# ✅ 상세 패널 없이: 목록 행을 클릭하면 같은 표 안에서 아래로 펼쳐지는(마스터/디테일) 방식
 
 import os
 import pandas as pd
@@ -12,7 +12,7 @@ from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode, JsCode
 
 st.set_page_config(page_title="장애 현황 대시보드", page_icon="📊", layout="wide")
 st.title("📊 장애 현황 대시보드")
-st.caption("KPI 카드 · 필터 · 업로드/삭제 관리 · 마스터/디테일(행 클릭으로 펼치기)")
+st.caption("KPI 카드 · 필터 · 업로드/삭제 관리 · 마스터/디테일(행 클릭으로 상세 펼치기)")
 
 # --- 표/에디터 셀 줄바꿈 보존 ---
 st.markdown(
@@ -160,8 +160,7 @@ def fetch_list(where_sql: str, params: dict, limit: int) -> pd.DataFrame:
         for col in ["description", "cause", "response", "note"]:
             if col in df.columns:
                 df[col] = df[col].astype(str).str.replace("\r\n", "\n").str.replace("\r", "\n")
-        # 요약용 1줄 텍스트(첫 줄) 생성
-        df["desc_one"] = df["description"].astype(str).str.split("\n").str[0]
+        df["desc_one"] = df["description"].astype(str).str.split("\n").str[0]  # 요약 1줄
     return df
 
 # ---------------------------
@@ -209,30 +208,24 @@ list_df = fetch_list(where_sql, params, int(limit))
 if list_df.empty:
     st.info("조건에 맞는 데이터가 없습니다.")
 else:
-    # 요약그리드에 보여줄 컬럼(한 줄)
-    master_cols = [
-        "id", "started_at", "ended_at", "duration",
-        "platform", "locale", "inquiry_count", "category", "desc_one"
-    ]
-    master_df = list_df[master_cols].rename(columns={"desc_one": "description"})
+    md_df = list_df.copy()
+    md_df["desc_one"] = md_df["description"].astype(str).str.split("\n").str[0]
 
-    gb = GridOptionsBuilder.from_dataframe(master_df)
-    # 행 클릭으로 확장/접기
+    gb = GridOptionsBuilder.from_dataframe(md_df)
     gb.configure_grid_options(
         masterDetail=True,
         detailRowAutoHeight=True,
+        detailRowHeight=220,
         rowHeight=36,
         onRowClicked=JsCode("function(e){ e.node.setExpanded(!e.node.expanded); }"),
         suppressRowClickSelection=False,
         suppressCellSelection=True,
     )
-    # 요약 description은 한 줄로 말줄임
-    gb.configure_column(
-        "description",
-        header_name="description",
-        cellStyle={"whiteSpace": "nowrap", "textOverflow": "ellipsis", "overflow": "hidden"},
-        width=420,
-    )
+
+    # 마스터(요약) 보이는 컬럼
+    gb.configure_column("desc_one", header_name="description",
+                        cellStyle={"whiteSpace": "nowrap", "textOverflow": "ellipsis", "overflow": "hidden"},
+                        width=420)
     gb.configure_column("started_at", width=140)
     gb.configure_column("ended_at",   width=140)
     gb.configure_column("category",   width=120)
@@ -240,7 +233,12 @@ else:
     gb.configure_column("locale",     width=70)
     gb.configure_column("inquiry_count", header_name="문의량", width=80)
 
-    # 디테일(펼쳐지는 영역) 그리드 정의
+    # 디테일로 넘길 원문 컬럼은 마스터에서 숨김
+    for col in ["description", "cause", "response", "note"]:
+        if col in md_df.columns:
+            gb.configure_column(col, hide=True)
+
+    # 디테일 그리드
     detail_col_defs = [
         {"field": "description", "headerName": "장애내용",
          "wrapText": True, "autoHeight": True,
@@ -265,19 +263,23 @@ else:
     gb.configure_grid_options(
         detailCellRendererParams={
             "detailGridOptions": detail_grid_options,
-            # 선택한 행의 전체 데이터를 디테일 그리드에 그대로 전달
             "getDetailRowData": JsCode("function(params){ params.successCallback([params.data]); }"),
         }
     )
 
     grid = AgGrid(
-        master_df,
+        md_df[[
+            "id", "started_at", "ended_at", "duration",
+            "platform", "locale", "inquiry_count", "category", "desc_one",
+            # 숨김이지만 데이터로 포함(디테일 전달용)
+            "description", "cause", "response", "note"
+        ]],
         gridOptions=gb.build(),
         theme="streamlit",
-        height=520,  # 펼침을 고려해 높이 조금 여유
+        height=560,
         allow_unsafe_jscode=True,
         update_mode=GridUpdateMode.NO_UPDATE,
-        enable_enterprise_modules=False,
+        enable_enterprise_modules=True,  # ✅ masterDetail 활성화(엔터프라이즈 모듈)
     )
 
 # ---------------------------
