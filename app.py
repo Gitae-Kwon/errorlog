@@ -183,7 +183,7 @@ where_sql = " AND ".join(where)
 # 상단 레이아웃: (좌) 카테고리 차트 / (우) KPI
 # ===========================
 st.subheader("상단 요약")
-col_chart, col_kpi = st.columns([2, 1])
+col_chart, col_kpi = st.columns([1, 1])
 
 with col_chart:
     cat_df = fetch_category_counts(where_sql, params)
