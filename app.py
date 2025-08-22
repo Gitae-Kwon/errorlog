@@ -210,14 +210,18 @@ with col_chart:
             x=alt.X("cnt:Q", title="건수")
         )
         bars = base.mark_bar().encode(
-            color=alt.Color(
-                "category:N", legend=None,
-                scale=alt.Scale(range=['#3b82f6'] + ['#60a5fa'] * (len(plot_df)-1))
+            color=alt.condition(
+                alt.datum.category == "총건수",
+                alt.value("#1d4ed8"),   # 총건수 → 진한 파랑 (#1d4ed8)
+                alt.value("#3b82f6")    # 나머지 → 기본 파랑
             ),
-            tooltip=[alt.Tooltip("category:N", title="구분"), alt.Tooltip("cnt:Q", title="건수")]
+            tooltip=[alt.Tooltip("category:N", title="구분"),
+                     alt.Tooltip("cnt:Q", title="건수")]
         )
         labels = base.mark_text(
-            align='left', baseline='middle', dx=4, fontSize=12, color='white'
+            align='left', baseline='middle', dx=4,
+            fontSize=12, color='white',
+            fontWeight='bold'  # 숫자 라벨도 볼드
         ).encode(text=alt.Text("cnt:Q", format=",.0f"))
 
         st.altair_chart(
@@ -226,7 +230,6 @@ with col_chart:
         )
 
 with col_kpi:
-    # 3) KPI 카드 — 가로로 3등분해서 그래프 높이에 맞게 컴팩트하게 표시
     st.markdown(
         """
         <style>
@@ -242,6 +245,12 @@ with col_kpi:
           .kpi-title{ font-size:14px; margin:0; opacity:0.85; }
           .kpi-value{ font-size:22px; margin:4px 0; font-weight:700; }
           .kpi-sub{ font-size:12px; opacity:0.7; margin-top:-2px; }
+          /* 총건수 강조 */
+          .kpi-card:first-child .kpi-title,
+          .kpi-card:first-child .kpi-value {
+              font-weight:900;
+              color:#1d4ed8; /* 진한 블루 */
+          }
         </style>
         """,
         unsafe_allow_html=True
