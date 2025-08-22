@@ -1,5 +1,6 @@
-# app_kpi_rowselect.py
-# KPI 카드 + 필터 + 업로드/삭제 + 표/상세 줄바꿈 표시 + (체크박스 X) 행 선택으로 상세 보기
+# app_kpi_master_detail.py
+# KPI 카드 + 필터 + 업로드/삭제 + 표/상세 줄바꿈 표시
+# ✅ 상세보기 패널 제거, 표에서 행 클릭 시 아래로 펼쳐지는(마스터/디테일) 방식
 
 import os
 import pandas as pd
@@ -7,13 +8,13 @@ import altair as alt
 import streamlit as st
 from datetime import datetime, timedelta
 from sqlalchemy import create_engine, text
-from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode
+from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode, JsCode
 
 st.set_page_config(page_title="장애 현황 대시보드", page_icon="📊", layout="wide")
 st.title("📊 장애 현황 대시보드")
-st.caption("KPI 카드 · 필터 · 업로드/삭제 관리 · 줄바꿈 표시 · 행 클릭 선택")
+st.caption("KPI 카드 · 필터 · 업로드/삭제 관리 · 마스터/디테일(행 클릭으로 펼치기)")
 
-# --- 셀에서 줄바꿈 보존 (표/에디터/툴팁 모두) ---
+# --- 표/에디터 셀 줄바꿈 보존 ---
 st.markdown(
     """
 <style>
@@ -28,7 +29,7 @@ st.markdown(
 )
 
 # ---------------------------
-# DB 연결 (Secrets 읽기 + SSL 강제)
+# DB 연결
 # ---------------------------
 @st.cache_resource(show_spinner=False)
 def get_engine():
@@ -97,10 +98,8 @@ with st.sidebar:
     keyword = st.text_input("키워드(내용/원인/대응/비고)")
     limit = st.number_input("목록 행수", min_value=50, max_value=5000, value=500, step=50)
 
-params = {
-    "date_from": datetime.combine(date_from, datetime.min.time()),
-    "date_to":   datetime.combine(date_to,   datetime.max.time())
-}
+params = {"date_from": datetime.combine(date_from, datetime.min.time()),
+          "date_to":   datetime.combine(date_to,   datetime.max.time())}
 where = ["i.started_at BETWEEN :date_from AND :date_to"]
 if sel_platforms:
     where.append("i.platform IN :platforms");   params["platforms"]  = tuple(sel_platforms)
@@ -161,6 +160,8 @@ def fetch_list(where_sql: str, params: dict, limit: int) -> pd.DataFrame:
         for col in ["description", "cause", "response", "note"]:
             if col in df.columns:
                 df[col] = df[col].astype(str).str.replace("\r\n", "\n").str.replace("\r", "\n")
+        # 요약용 1줄 텍스트(첫 줄) 생성
+        df["desc_one"] = df["description"].astype(str).str.split("\n").str[0]
     return df
 
 # ---------------------------
@@ -200,88 +201,84 @@ else:
     )
 
 # -----------------------------------------------------------------------------
-# 목록 (줄바꿈 보이는 표) + 행 클릭 → 상세 보기
+# 목록 (마스터/디테일: 행 클릭 → 그 행 아래로 상세 펼치기)
 # -----------------------------------------------------------------------------
-st.subheader("📄 사건 목록 (행 선택)")
-
-if "selected_id" not in st.session_state:
-    st.session_state.selected_id = None
+st.subheader("📄 사건 목록 (행 클릭으로 상세 펼치기)")
 
 list_df = fetch_list(where_sql, params, int(limit))
 if list_df.empty:
     st.info("조건에 맞는 데이터가 없습니다.")
 else:
-    gb = GridOptionsBuilder.from_dataframe(list_df)
-    gb.configure_selection(selection_mode="single", use_checkbox=False)
-    gb.configure_grid_options(rowHeight=36, suppressRowClickSelection=False)
-    wrap_cols = ["description", "cause", "response", "note"]
-    for col in wrap_cols:
-        if col in list_df.columns:
-            gb.configure_column(
-                col,
-                autoHeight=True,
-                cellStyle={"whiteSpace": "pre-wrap", "lineHeight": "1.3"},
-                width=400 if col in ("cause", "response") else 280,
-            )
+    # 요약그리드에 보여줄 컬럼(한 줄)
+    master_cols = [
+        "id", "started_at", "ended_at", "duration",
+        "platform", "locale", "inquiry_count", "category", "desc_one"
+    ]
+    master_df = list_df[master_cols].rename(columns={"desc_one": "description"})
+
+    gb = GridOptionsBuilder.from_dataframe(master_df)
+    # 행 클릭으로 확장/접기
+    gb.configure_grid_options(
+        masterDetail=True,
+        detailRowAutoHeight=True,
+        rowHeight=36,
+        onRowClicked=JsCode("function(e){ e.node.setExpanded(!e.node.expanded); }"),
+        suppressRowClickSelection=False,
+        suppressCellSelection=True,
+    )
+    # 요약 description은 한 줄로 말줄임
+    gb.configure_column(
+        "description",
+        header_name="description",
+        cellStyle={"whiteSpace": "nowrap", "textOverflow": "ellipsis", "overflow": "hidden"},
+        width=420,
+    )
     gb.configure_column("started_at", width=140)
     gb.configure_column("ended_at",   width=140)
     gb.configure_column("category",   width=120)
     gb.configure_column("platform",   width=90)
     gb.configure_column("locale",     width=70)
+    gb.configure_column("inquiry_count", header_name="문의량", width=80)
 
-    grid = AgGrid(
-        list_df,
-        gridOptions=gb.build(),
-        theme="streamlit",
-        height=420,
-        allow_unsafe_jscode=True,
-        update_mode=GridUpdateMode.SELECTION_CHANGED,
-        enable_enterprise_modules=False,
+    # 디테일(펼쳐지는 영역) 그리드 정의
+    detail_col_defs = [
+        {"field": "description", "headerName": "장애내용",
+         "wrapText": True, "autoHeight": True,
+         "cellStyle": {"white-space": "pre-wrap", "line-height": "1.3"}},
+        {"field": "cause", "headerName": "원인",
+         "wrapText": True, "autoHeight": True,
+         "cellStyle": {"white-space": "pre-wrap", "line-height": "1.3"}},
+        {"field": "response", "headerName": "대응",
+         "wrapText": True, "autoHeight": True,
+         "cellStyle": {"white-space": "pre-wrap", "line-height": "1.3"}},
+        {"field": "note", "headerName": "비고",
+         "wrapText": True, "autoHeight": True,
+         "cellStyle": {"white-space": "pre-wrap", "line-height": "1.3"}},
+    ]
+    detail_grid_options = {
+        "defaultColDef": {"flex": 1, "sortable": False, "filter": False, "resizable": True},
+        "columnDefs": detail_col_defs,
+        "suppressCellSelection": True,
+        "rowHeight": 24,
+    }
+
+    gb.configure_grid_options(
+        detailCellRendererParams={
+            "detailGridOptions": detail_grid_options,
+            # 선택한 행의 전체 데이터를 디테일 그리드에 그대로 전달
+            "getDetailRowData": JsCode("function(params){ params.successCallback([params.data]); }"),
+        }
     )
 
-    sel_rows = grid["selected_rows"]
-    if sel_rows:
-        new_sel = int(sel_rows[0]["id"])
-        if st.session_state.selected_id != new_sel:
-            st.session_state.selected_id = new_sel
-    else:
-        st.session_state.selected_id = None
-
-# ---------------------------
-# 상세 보기 (선택 전에는 비노출)
-# ---------------------------
-st.markdown("---")
-st.subheader("🔎 상세 보기")
-
-if st.session_state.selected_id is None:
-    st.caption("위 ‘사건 목록’에서 행을 클릭하면 상세가 여기에 표시됩니다.")
-else:
-    with engine.connect() as conn:
-        detail = pd.read_sql(text("SELECT * FROM incidents WHERE id=:id"),
-                             conn, params={"id": st.session_state.selected_id})
-    if detail.empty:
-        st.info("해당 ID의 데이터가 없습니다.")
-    else:
-        row = detail.iloc[0]
-        st.write(f"**ID**: {int(row['id'])}")
-        st.write(f"**시작**: {row.get('started_at','')}")
-        st.write(f"**종료**: {row.get('ended_at','')}")
-        st.write(f"**장애시간**: {row.get('duration','')}")
-        st.write(f"**플랫폼/로케일**: {row.get('platform','')} / {row.get('locale','')}")
-        st.write(f"**문의량**: {row.get('inquiry_count','')}")
-        st.write(f"**카테고리**: {row.get('category','')}")
-        st.markdown("**장애내용**")
-        st.markdown(f"<div style='white-space:pre-wrap'>{row.get('description','') or ''}</div>", unsafe_allow_html=True)
-        st.markdown("**원인**")
-        st.markdown(f"<div style='white-space:pre-wrap'>{row.get('cause','') or ''}</div>", unsafe_allow_html=True)
-        st.markdown("**대응**")
-        st.markdown(f"<div style='white-space:pre-wrap'>{row.get('response','') or ''}</div>", unsafe_allow_html=True)
-        st.markdown("**비고**")
-        st.markdown(f"<div style='white-space:pre-wrap'>{row.get('note','') or ''}</div>", unsafe_allow_html=True)
-
-        if st.button("선택 해제 / 상세 닫기", use_container_width=True):
-            st.session_state.selected_id = None
-            st.experimental_rerun()
+    grid = AgGrid(
+        master_df,
+        gridOptions=gb.build(),
+        theme="streamlit",
+        height=520,  # 펼침을 고려해 높이 조금 여유
+        allow_unsafe_jscode=True,
+        update_mode=GridUpdateMode.NO_UPDATE,
+        enable_enterprise_modules=False,
+    )
 
 # ---------------------------
 # 관리: 선택 삭제
