@@ -87,19 +87,42 @@ PLATFORMS, LOCALES, CATEGORIES = get_distinct_values()
 # ---------------------------
 with st.sidebar:
     st.header("필터")
+
     today = datetime.now().date()
-    date_from, date_to = st.date_input("기간(started_at)", value=(today - timedelta(days=30), today))
-    if isinstance(date_from, tuple):
-        date_from, date_to = date_from
+    # 기본값 (세션 유지)
+    start_default = st.session_state.get("start_date", today - timedelta(days=30))
+    end_default   = st.session_state.get("end_date", today)
 
-    sel_platforms = st.multiselect("플랫폼", options=PLATFORMS)
-    sel_locales   = st.multiselect("로케일", options=LOCALES)
-    sel_categories= st.multiselect("카테고리", options=CATEGORIES)
-    keyword = st.text_input("키워드(내용/원인/대응/비고)")
-    limit = st.number_input("목록 행수", min_value=50, max_value=5000, value=500, step=50)
+    # 시작/종료일을 개별로 입력
+    start_date = st.date_input(
+        "시작일 (started_at)",
+        value=start_default,
+        key="start_date"
+    )
+    end_date = st.date_input(
+        "종료일 (started_at)",
+        value=end_default,
+        min_value=start_date,  # 시작일 이후만 선택 가능
+        key="end_date"
+    )
 
-params = {"date_from": datetime.combine(date_from, datetime.min.time()),
-          "date_to":   datetime.combine(date_to,   datetime.max.time())}
+    # 방어 로직: 종료일이 시작일보다 빠르면 자동 보정
+    if end_date < start_date:
+        st.warning("종료일이 시작일보다 빠릅니다. 시작일과 같게 맞췄어요.")
+        end_date = start_date
+        st.session_state["end_date"] = end_date
+
+    sel_platforms  = st.multiselect("플랫폼", options=PLATFORMS)
+    sel_locales    = st.multiselect("로케일", options=LOCALES)
+    sel_categories = st.multiselect("카테고리", options=CATEGORIES)
+    keyword        = st.text_input("키워드(내용/원인/대응/비고)")
+    limit          = st.number_input("목록 행수", min_value=50, max_value=5000, value=500, step=50)
+
+# 날짜 파라미터 구성
+params = {
+    "date_from": datetime.combine(start_date, datetime.min.time()),
+    "date_to":   datetime.combine(end_date,   datetime.max.time()),
+}
 where = ["i.started_at BETWEEN :date_from AND :date_to"]
 if sel_platforms:
     where.append("i.platform IN :platforms");   params["platforms"]  = tuple(sel_platforms)
