@@ -222,7 +222,7 @@ else:
         suppressCellSelection=True,
     )
 
-    # 마스터(요약) 보이는 컬럼
+    # 마스터에 보일 컬럼 정의
     gb.configure_column("desc_one", header_name="description",
                         cellStyle={"whiteSpace": "nowrap", "textOverflow": "ellipsis", "overflow": "hidden"},
                         width=420)
@@ -234,11 +234,11 @@ else:
     gb.configure_column("inquiry_count", header_name="문의량", width=80)
 
     # 디테일로 넘길 원문 컬럼은 마스터에서 숨김
-    for col in ["description", "cause", "response", "note"]:
+    for col in ["description", "cause", "response", "note", "created_at", "updated_at"]:
         if col in md_df.columns:
             gb.configure_column(col, hide=True)
 
-    # 디테일 그리드
+    # 디테일 그리드 옵션
     detail_col_defs = [
         {"field": "description", "headerName": "장애내용",
          "wrapText": True, "autoHeight": True,
@@ -253,6 +253,7 @@ else:
          "wrapText": True, "autoHeight": True,
          "cellStyle": {"white-space": "pre-wrap", "line-height": "1.3"}},
     ]
+
     detail_grid_options = {
         "defaultColDef": {"flex": 1, "sortable": False, "filter": False, "resizable": True},
         "columnDefs": detail_col_defs,
@@ -271,7 +272,7 @@ else:
         md_df[[
             "id", "started_at", "ended_at", "duration",
             "platform", "locale", "inquiry_count", "category", "desc_one",
-            # 숨김이지만 데이터로 포함(디테일 전달용)
+            # detail 전달용 숨김 컬럼
             "description", "cause", "response", "note"
         ]],
         gridOptions=gb.build(),
@@ -279,7 +280,7 @@ else:
         height=560,
         allow_unsafe_jscode=True,
         update_mode=GridUpdateMode.NO_UPDATE,
-        enable_enterprise_modules=True,  # ✅ masterDetail 활성화(엔터프라이즈 모듈)
+        enable_enterprise_modules=True,
     )
 
 # ---------------------------
