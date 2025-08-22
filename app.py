@@ -183,6 +183,16 @@ where_sql = " AND ".join(where)
 # 상단 레이아웃: (좌) 카테고리 차트 / (우) KPI
 # ===========================
 st.subheader("상단 요약")
+
+# 1) KPI 값을 먼저 계산 (에러 대비 기본값 포함)
+total, today_cnt, top_cat_name, top_cat_cnt = 0, 0, "-", 0
+try:
+    _total, _today, (cat_name, cat_cnt) = fetch_kpis(where_sql, params)
+    total, today_cnt, top_cat_name, top_cat_cnt = int(_total), int(_today), str(cat_name), int(cat_cnt)
+except Exception as e:
+    st.warning(f"KPI 로딩 오류: {e}")
+
+# 2) 좌우 50%로 배치
 col_chart, col_kpi = st.columns([1, 1])
 
 with col_chart:
@@ -201,28 +211,44 @@ with col_chart:
         )
         bars = base.mark_bar().encode(
             color=alt.Color(
-                "category:N",
-                legend=None,
-                scale=alt.Scale(range=['#3b82f6'] + ['#60a5fa'] * (len(plot_df)-1))  # 총건수 진한 파랑, 나머지 연한 파랑
+                "category:N", legend=None,
+                scale=alt.Scale(range=['#3b82f6'] + ['#60a5fa'] * (len(plot_df)-1))
             ),
             tooltip=[alt.Tooltip("category:N", title="구분"), alt.Tooltip("cnt:Q", title="건수")]
         )
         labels = base.mark_text(
             align='left', baseline='middle', dx=4, fontSize=12, color='white'
-        ).encode(
-            text=alt.Text("cnt:Q", format=",.0f")
-        )
+        ).encode(text=alt.Text("cnt:Q", format=",.0f"))
+
         st.altair_chart((bars + labels).properties(height=28 * len(plot_df), width="container"),
                         use_container_width=True)
 
 with col_kpi:
-    st.subheader("📊 요약 지표")
+    # 3) KPI 가운데 정렬 카드
+    st.markdown(
+        """
+        <style>
+        .kpi-card{
+            text-align:center;
+            border:1px solid rgba(255,255,255,0.15);
+            border-radius:12px;
+            padding:14px 10px;
+            margin-bottom:10px;
+            background:rgba(255,255,255,0.03);
+        }
+        .kpi-title{ font-size:16px; margin:0 0 6px 0; opacity:0.9; }
+        .kpi-value{ font-size:36px; margin:0; font-weight:700; }
+        .kpi-sub{ font-size:14px; margin-top:4px; opacity:0.8; }
+        </style>
+        """,
+        unsafe_allow_html=True
+    )
 
     st.markdown(
         f"""
-        <div style="text-align:center">
-            <h4>총 건수</h4>
-            <h2>{total:,}</h2>
+        <div class="kpi-card">
+            <div class="kpi-title">총 건수</div>
+            <div class="kpi-value">{total:,}</div>
         </div>
         """,
         unsafe_allow_html=True
@@ -230,9 +256,9 @@ with col_kpi:
 
     st.markdown(
         f"""
-        <div style="text-align:center">
-            <h4>오늘 건수</h4>
-            <h2>{today_cnt:,}</h2>
+        <div class="kpi-card">
+            <div class="kpi-title">오늘 건수</div>
+            <div class="kpi-value">{today_cnt:,}</div>
         </div>
         """,
         unsafe_allow_html=True
@@ -240,10 +266,10 @@ with col_kpi:
 
     st.markdown(
         f"""
-        <div style="text-align:center">
-            <h4>최다 카테고리</h4>
-            <h2>{top_cat_name}</h2>
-            <p>{top_cat_cnt:,}건</p>
+        <div class="kpi-card">
+            <div class="kpi-title">최다 카테고리</div>
+            <div class="kpi-value">{top_cat_name}</div>
+            <div class="kpi-sub">{top_cat_cnt:,}건</div>
         </div>
         """,
         unsafe_allow_html=True
