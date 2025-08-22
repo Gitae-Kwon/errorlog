@@ -1,6 +1,5 @@
-# app_kpi_master_detail.py
-# KPI 카드 + 필터 + 업로드/삭제 + 표/상세 줄바꿈 표시
-# ✅ 상세 패널 없이: 목록 행을 클릭하면 같은 표 안에서 아래로 펼쳐지는(마스터/디테일) 방식
+# app_kpi_master_detail_with_category_chart.py
+# KPI 카드 + 필터 + 업로드/삭제 + 마스터/디테일(행 클릭) + 카테고리 막대(색상+라벨)
 
 import os
 import pandas as pd
@@ -12,7 +11,7 @@ from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode, JsCode
 
 st.set_page_config(page_title="장애 현황 대시보드", page_icon="📊", layout="wide")
 st.title("📊 장애 현황 대시보드")
-st.caption("KPI 카드 · 필터 · 업로드/삭제 관리 · 마스터/디테일(행 클릭으로 상세 펼치기)")
+st.caption("KPI 카드 · 필터 · 업로드/삭제 관리 · 마스터/디테일(행 클릭) · 카테고리 막대(색상+라벨)")
 
 # --- 표/에디터 셀 줄바꿈 보존 ---
 st.markdown(
@@ -80,61 +79,6 @@ def get_distinct_values():
         ), conn)["category"].tolist()
     return platforms, locales, cats
 
-PLATFORMS, LOCALES, CATEGORIES = get_distinct_values()
-
-# ---------------------------
-# 사이드바 필터
-# ---------------------------
-with st.sidebar:
-    st.header("필터")
-
-    today = datetime.now().date()
-    # 기본값 (세션 유지)
-    start_default = st.session_state.get("start_date", today - timedelta(days=30))
-    end_default   = st.session_state.get("end_date", today)
-
-    # 시작/종료일을 개별로 입력
-    start_date = st.date_input(
-        "시작일 (started_at)",
-        value=start_default,
-        key="start_date"
-    )
-    end_date = st.date_input(
-        "종료일 (started_at)",
-        value=end_default,
-        min_value=start_date,  # 시작일 이후만 선택 가능
-        key="end_date"
-    )
-
-    # 방어 로직: 종료일이 시작일보다 빠르면 자동 보정
-    if end_date < start_date:
-        st.warning("종료일이 시작일보다 빠릅니다. 시작일과 같게 맞췄어요.")
-        end_date = start_date
-        st.session_state["end_date"] = end_date
-
-    sel_platforms  = st.multiselect("플랫폼", options=PLATFORMS)
-    sel_locales    = st.multiselect("로케일", options=LOCALES)
-    sel_categories = st.multiselect("카테고리", options=CATEGORIES)
-    keyword        = st.text_input("키워드(내용/원인/대응/비고)")
-    limit          = st.number_input("목록 행수", min_value=50, max_value=5000, value=500, step=50)
-
-# 날짜 파라미터 구성
-params = {
-    "date_from": datetime.combine(start_date, datetime.min.time()),
-    "date_to":   datetime.combine(end_date,   datetime.max.time()),
-}
-where = ["i.started_at BETWEEN :date_from AND :date_to"]
-if sel_platforms:
-    where.append("i.platform IN :platforms");   params["platforms"]  = tuple(sel_platforms)
-if sel_locales:
-    where.append("i.locale IN :locales");       params["locales"]    = tuple(sel_locales)
-if sel_categories:
-    where.append("i.category IN :categories");  params["categories"] = tuple(sel_categories)
-if keyword.strip():
-    where.append("(i.description LIKE :kw OR i.cause LIKE :kw OR i.response LIKE :kw OR i.note LIKE :kw)")
-    params["kw"] = f"%{keyword.strip()}%"
-where_sql = " AND ".join(where)
-
 @st.cache_data(ttl=90, show_spinner=False)
 def fetch_kpis(where_sql: str, params: dict):
     with engine.connect() as conn:
@@ -186,28 +130,107 @@ def fetch_list(where_sql: str, params: dict, limit: int) -> pd.DataFrame:
         df["desc_one"] = df["description"].astype(str).str.split("\n").str[0]  # 요약 1줄
     return df
 
+@st.cache_data(ttl=90, show_spinner=False)
+def fetch_category_counts(where_sql: str, params: dict) -> pd.DataFrame:
+    with engine.connect() as conn:
+        df = pd.read_sql(
+            text(f"SELECT i.category, COUNT(*) cnt FROM incidents i WHERE {where_sql} GROUP BY i.category"),
+            conn, params=params
+        )
+    return df
+
+PLATFORMS, LOCALES, CATEGORIES = get_distinct_values()
+
+# ---------------------------
+# 사이드바 필터 (시작/종료일 개별 입력)
+# ---------------------------
+with st.sidebar:
+    st.header("필터")
+    today = datetime.now().date()
+    start_default = st.session_state.get("start_date", today - timedelta(days=30))
+    end_default   = st.session_state.get("end_date", today)
+
+    start_date = st.date_input("시작일 (started_at)", value=start_default, key="start_date")
+    end_date   = st.date_input("종료일 (started_at)", value=end_default, min_value=start_date, key="end_date")
+    if end_date < start_date:
+        st.warning("종료일이 시작일보다 빠릅니다. 시작일로 보정합니다.")
+        end_date = start_date
+        st.session_state["end_date"] = end_date
+
+    sel_platforms  = st.multiselect("플랫폼", options=PLATFORMS)
+    sel_locales    = st.multiselect("로케일", options=LOCALES)
+    sel_categories = st.multiselect("카테고리", options=CATEGORIES)
+    keyword        = st.text_input("키워드(내용/원인/대응/비고)")
+    limit          = st.number_input("목록 행수", min_value=50, max_value=5000, value=500, step=50)
+
+params = {
+    "date_from": datetime.combine(start_date, datetime.min.time()),
+    "date_to":   datetime.combine(end_date,   datetime.max.time()),
+}
+where = ["i.started_at BETWEEN :date_from AND :date_to"]
+if sel_platforms:
+    where.append("i.platform IN :platforms");   params["platforms"]  = tuple(sel_platforms)
+if sel_locales:
+    where.append("i.locale IN :locales");       params["locales"]    = tuple(sel_locales)
+if sel_categories:
+    where.append("i.category IN :categories");  params["categories"] = tuple(sel_categories)
+if keyword.strip():
+    where.append("(i.description LIKE :kw OR i.cause LIKE :kw OR i.response LIKE :kw OR i.note LIKE :kw)")
+    params["kw"] = f"%{keyword.strip()}%"
+where_sql = " AND ".join(where)
+
 # ---------------------------
 # KPI 카드
 # ---------------------------
 try:
     total, today_cnt, (top_cat_name, top_cat_cnt), plat_df = fetch_kpis(where_sql, params)
-    c1, c2, c3, c4 = st.columns(4)
+    c1, c2, c3 = st.columns([1,1,1])
     c1.metric("총 건수", f"{total:,}")
     c2.metric("오늘 건수", f"{today_cnt:,}")
     c3.metric("최다 카테고리", top_cat_name, delta=f"{top_cat_cnt:,}건")
-    with c4:
-        st.write("플랫폼별")
-        if not plat_df.empty:
-            st.altair_chart(
-                alt.Chart(plat_df).mark_bar().encode(
-                    x=alt.X('platform:N', sort='-y'), y='cnt:Q', tooltip=['platform','cnt']
-                ),
-                use_container_width=True
-            )
-        else:
-            st.info("데이터 없음")
 except Exception as e:
     st.warning(f"KPI 로딩 오류: {e}")
+
+# ---------------------------
+# 카테고리별 통계 (총건수 + 가로바, 위: 총건수 / 아래: 최소 건수)
+# ---------------------------
+st.subheader("📊 카테고리별 통계 (총건수 상단, 최소 건수 하단)")
+
+cat_df = fetch_category_counts(where_sql, params)
+if cat_df.empty:
+    st.info("카테고리 데이터가 없습니다.")
+else:
+    total_df = pd.DataFrame([{"category": "총건수", "cnt": int(cat_df["cnt"].sum())}])
+    cat_sorted = cat_df.sort_values("cnt", ascending=False).reset_index(drop=True)
+    order = ["총건수"] + cat_sorted["category"].tolist()
+    plot_df = pd.concat([total_df, cat_sorted], ignore_index=True)
+
+    # 가로 막대 + 라벨(막대 끝에 건수 표시)
+    base = alt.Chart(plot_df).encode(
+        y=alt.Y("category:N", sort=order, title=""),
+        x=alt.X("cnt:Q", title="건수")
+    )
+
+    bars = base.mark_bar().encode(
+        color=alt.Color(
+            "category:N",
+            legend=None,
+            scale=alt.Scale(range=['#3b82f6'] + ['#60a5fa'] * (len(plot_df)-1))  # 총건수 진한색, 나머지 연한색
+        ),
+        tooltip=[alt.Tooltip("category:N", title="구분"), alt.Tooltip("cnt:Q", title="건수")]
+    )
+
+    labels = base.mark_text(
+        align='left',
+        baseline='middle',
+        dx=4,
+        fontSize=12,
+        color='white'
+    ).encode(
+        text=alt.Text("cnt:Q", format=",.0f")
+    )
+
+    st.altair_chart((bars + labels).properties(height=28 * len(plot_df), width="container"), use_container_width=True)
 
 # ---------------------------
 # 일별 추이
@@ -245,7 +268,7 @@ else:
         suppressCellSelection=True,
     )
 
-    # 마스터에 보일 컬럼 정의
+    # 마스터(요약) 보이는 컬럼
     gb.configure_column("desc_one", header_name="description",
                         cellStyle={"whiteSpace": "nowrap", "textOverflow": "ellipsis", "overflow": "hidden"},
                         width=420)
@@ -256,12 +279,12 @@ else:
     gb.configure_column("locale",     width=70)
     gb.configure_column("inquiry_count", header_name="문의량", width=80)
 
-    # 디테일로 넘길 원문 컬럼은 마스터에서 숨김
+    # 디테일로 넘길 원문·관리 컬럼은 마스터에서 숨김
     for col in ["description", "cause", "response", "note", "created_at", "updated_at"]:
         if col in md_df.columns:
             gb.configure_column(col, hide=True)
 
-    # 디테일 그리드 옵션
+    # 디테일 그리드
     detail_col_defs = [
         {"field": "description", "headerName": "장애내용",
          "wrapText": True, "autoHeight": True,
@@ -276,7 +299,6 @@ else:
          "wrapText": True, "autoHeight": True,
          "cellStyle": {"white-space": "pre-wrap", "line-height": "1.3"}},
     ]
-
     detail_grid_options = {
         "defaultColDef": {"flex": 1, "sortable": False, "filter": False, "resizable": True},
         "columnDefs": detail_col_defs,
@@ -296,14 +318,14 @@ else:
             "id", "started_at", "ended_at", "duration",
             "platform", "locale", "inquiry_count", "category", "desc_one",
             # detail 전달용 숨김 컬럼
-            "description", "cause", "response", "note"
+            "description", "cause", "response", "note", "created_at", "updated_at"
         ]],
         gridOptions=gb.build(),
         theme="streamlit",
         height=560,
         allow_unsafe_jscode=True,
         update_mode=GridUpdateMode.NO_UPDATE,
-        enable_enterprise_modules=True,
+        enable_enterprise_modules=True,  # masterDetail 활성화
     )
 
 # ---------------------------
