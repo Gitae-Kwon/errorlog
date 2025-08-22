@@ -180,20 +180,11 @@ if keyword.strip():
 where_sql = " AND ".join(where)
 
 # ===========================
-# 상단 레이아웃: (좌) 카테고리 차트 / (우) KPI
+# 상단 요약: (좌) 카테고리 그래프 / (우) KPI 카드 (가로 배치)
 # ===========================
 st.subheader("상단 요약")
 
-# 1) KPI 값을 먼저 계산 (에러 대비 기본값 포함)
-total, today_cnt, top_cat_name, top_cat_cnt = 0, 0, "-", 0
-try:
-    _total, _today, (cat_name, cat_cnt) = fetch_kpis(where_sql, params)
-    total, today_cnt, top_cat_name, top_cat_cnt = int(_total), int(_today), str(cat_name), int(cat_cnt)
-except Exception as e:
-    st.warning(f"KPI 로딩 오류: {e}")
-
-# 2) 좌우 50%로 배치
-col_chart, col_kpi = st.columns([1, 1])
+col_chart, col_kpi = st.columns([2, 1])
 
 with col_chart:
     cat_df = fetch_category_counts(where_sql, params)
@@ -224,21 +215,21 @@ with col_chart:
                         use_container_width=True)
 
 with col_kpi:
-    # 3) KPI 가운데 정렬 카드
     st.markdown(
         """
         <style>
+        .kpi-grid{display:flex; gap:8px;}
         .kpi-card{
+            flex:1;
             text-align:center;
             border:1px solid rgba(255,255,255,0.15);
-            border-radius:12px;
-            padding:14px 10px;
-            margin-bottom:10px;
+            border-radius:10px;
+            padding:8px;
             background:rgba(255,255,255,0.03);
         }
-        .kpi-title{ font-size:16px; margin:0 0 6px 0; opacity:0.9; }
-        .kpi-value{ font-size:36px; margin:0; font-weight:700; }
-        .kpi-sub{ font-size:14px; margin-top:4px; opacity:0.8; }
+        .kpi-title{ font-size:14px; margin:0; opacity:0.85; }
+        .kpi-value{ font-size:22px; margin:4px 0; font-weight:700; }
+        .kpi-sub{ font-size:12px; opacity:0.7; }
         </style>
         """,
         unsafe_allow_html=True
@@ -246,30 +237,20 @@ with col_kpi:
 
     st.markdown(
         f"""
-        <div class="kpi-card">
+        <div class="kpi-grid">
+          <div class="kpi-card">
             <div class="kpi-title">총 건수</div>
             <div class="kpi-value">{total:,}</div>
-        </div>
-        """,
-        unsafe_allow_html=True
-    )
-
-    st.markdown(
-        f"""
-        <div class="kpi-card">
+          </div>
+          <div class="kpi-card">
             <div class="kpi-title">오늘 건수</div>
             <div class="kpi-value">{today_cnt:,}</div>
-        </div>
-        """,
-        unsafe_allow_html=True
-    )
-
-    st.markdown(
-        f"""
-        <div class="kpi-card">
+          </div>
+          <div class="kpi-card">
             <div class="kpi-title">최다 카테고리</div>
             <div class="kpi-value">{top_cat_name}</div>
             <div class="kpi-sub">{top_cat_cnt:,}건</div>
+          </div>
         </div>
         """,
         unsafe_allow_html=True
