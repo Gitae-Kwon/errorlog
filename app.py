@@ -207,7 +207,8 @@ with col_chart:
 
         base = alt.Chart(plot_df).encode(
             y=alt.Y("category:N", sort=order, title=""),
-            x=alt.X("cnt:Q", title="건수")
+            x=alt.X("cnt:Q", title="건수",
+                    axis=alt.Axis(format="d", tickMinStep=1))  # 🔹 정수 표시
         )
 
         bars = base.mark_bar().encode(
