@@ -1,9 +1,9 @@
 # app_topcombo_master_detail.py
-# 상단: (좌) 카테고리 차트 + (우) KPI
+# 좌: 카테고리 차트 / 우: KPI(가로 3개)
 # 목록: 마스터/디테일(행 클릭으로 상세 펼침)
 # 날짜: 시작/종료일 개별 입력
-# 관리컬럼: created_at / updated_at 숨김
-# 차트: 색상+라벨 표시
+# created_at / updated_at 숨김
+# 차트: 색상+라벨, 총건수 강조
 
 import os
 import pandas as pd
@@ -13,19 +13,25 @@ from datetime import datetime, timedelta
 from sqlalchemy import create_engine, text
 from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode, JsCode
 
-st.set_page_config(page_title="장애 현황 대시보드", page_icon="📊", layout="wide")
-st.title("📊 장애 현황 대시보드")
-st.caption("상단: 카테고리 차트 + KPI · 목록: 행 클릭 상세 · 업로드/삭제 관리")
+# ---------------------------
+# 페이지 설정 + 상단 타이틀(작게)
+# ---------------------------
+st.set_page_config(page_title="장애현황", page_icon="📊", layout="wide")
+st.markdown("<h1 style='font-size:2rem;margin:0 0 0.5rem 0;'>📊 장애현황</h1>", unsafe_allow_html=True)
+# 설명 캡션은 삭제
 
-# --- 표/에디터 셀 줄바꿈 보존 ---
+# --- 표/에디터 셀 줄바꿈 + AgGrid 폰트 축소 ---
 st.markdown(
     """
 <style>
+/* DataFrame / DataEditor 줄바꿈 유지 */
 [data-testid="stDataFrame"] div[role="gridcell"],
 [data-testid="stDataEditor"] div[role="gridcell"]{
   white-space: pre-wrap !important;
   line-height: 1.3;
 }
+/* AgGrid 전체 폰트 축소 */
+.ag-theme-streamlit { --ag-font-size: 12px; }
 </style>
 """,
     unsafe_allow_html=True,
@@ -47,7 +53,7 @@ def get_engine():
         cfg = s["DB"];  host = cfg.get("DB_HOST") or cfg.get("HOST")
         port = int(cfg.get("DB_PORT") or cfg.get("PORT") or 3306)
         user = cfg.get("DB_USER") or cfg.get("USER")
-        pw   = cfg.get("DB_PASSWORD") or cfg.get("PASSWORD")
+        pw   = cfg.get("DB_PASSWORD") or cfg.get("DB_PASSWORD")
         name = cfg.get("DB_NAME") or cfg.get("NAME")
     else:
         host = os.getenv("DB_HOST"); port = int(os.getenv("DB_PORT") or 3306)
@@ -101,14 +107,6 @@ def fetch_kpis(where_sql: str, params: dict):
     return total, today_cnt, top_cat
 
 @st.cache_data(ttl=90, show_spinner=False)
-def fetch_timeseries(where_sql: str, params: dict) -> pd.DataFrame:
-    with engine.connect() as conn:
-        return pd.read_sql(text(
-            f"SELECT DATE(i.started_at) d, COUNT(*) cnt FROM incidents i WHERE {where_sql} "
-            "GROUP BY DATE(i.started_at) ORDER BY d"
-        ), conn, params=params)
-
-@st.cache_data(ttl=90, show_spinner=False)
 def fetch_list(where_sql: str, params: dict, limit: int) -> pd.DataFrame:
     q = text(f"""
         SELECT i.id, i.started_at, i.ended_at, i.duration, i.platform, i.locale, i.inquiry_count,
@@ -127,7 +125,7 @@ def fetch_list(where_sql: str, params: dict, limit: int) -> pd.DataFrame:
         for col in ["description", "cause", "response", "note"]:
             if col in df.columns:
                 df[col] = df[col].astype(str).str.replace("\r\n", "\n").str.replace("\r", "\n")
-        df["desc_one"] = df["description"].astype(str).str.split("\n").str[0]  # 요약 1줄
+        df["desc_one"] = df["description"].astype(str).str.split("\n").str[0]
     return df
 
 @st.cache_data(ttl=90, show_spinner=False)
@@ -180,11 +178,11 @@ if keyword.strip():
 where_sql = " AND ".join(where)
 
 # ===========================
-# 상단 요약: (좌) 카테고리 그래프 / (우) KPI 카드(가로 3개, 높이 컴팩트)
+# 요약: (좌) 카테고리 그래프 / (우) KPI(가로 3개, 가운데 정렬)
 # ===========================
-st.subheader("상단 요약")
+st.subheader("요약")
 
-# 1) KPI 값 먼저 계산
+# KPI 먼저 계산
 total, today_cnt, top_cat_name, top_cat_cnt = 0, 0, "-", 0
 try:
     _t, _td, (cat_name, cat_cnt) = fetch_kpis(where_sql, params)
@@ -192,7 +190,7 @@ try:
 except Exception as e:
     st.warning(f"KPI 로딩 오류: {e}")
 
-# 2) 좌/우 영역 (왼쪽 그래프, 오른쪽 KPI) — 비율은 2:1 (원하면 [1,1]로 조정)
+# 좌/우 50% 배치
 col_chart, col_kpi = st.columns([1, 1])
 
 with col_chart:
@@ -210,18 +208,18 @@ with col_chart:
             x=alt.X("cnt:Q", title="건수")
         )
         bars = base.mark_bar().encode(
+            # 총건수는 더 진한 블루, 나머지는 기본 블루
             color=alt.condition(
                 alt.datum.category == "총건수",
-                alt.value("#1d4ed8"),   # 총건수 → 진한 파랑 (#1d4ed8)
-                alt.value("#3b82f6")    # 나머지 → 기본 파랑
+                alt.value("#1d4ed8"),
+                alt.value("#3b82f6")
             ),
             tooltip=[alt.Tooltip("category:N", title="구분"),
                      alt.Tooltip("cnt:Q", title="건수")]
         )
         labels = base.mark_text(
             align='left', baseline='middle', dx=4,
-            fontSize=12, color='white',
-            fontWeight='bold'  # 숫자 라벨도 볼드
+            fontSize=12, color='white', fontWeight='bold'
         ).encode(text=alt.Text("cnt:Q", format=",.0f"))
 
         st.altair_chart(
@@ -235,27 +233,21 @@ with col_kpi:
         <style>
           .kpi-grid{display:flex; gap:8px;}
           .kpi-card{
-              flex:1;
-              text-align:center;
+              flex:1; text-align:center;
               border:1px solid rgba(255,255,255,0.15);
-              border-radius:10px;
-              padding:8px 6px;
+              border-radius:10px; padding:8px 6px;
               background:rgba(255,255,255,0.03);
           }
           .kpi-title{ font-size:14px; margin:0; opacity:0.85; }
           .kpi-value{ font-size:22px; margin:4px 0; font-weight:700; }
           .kpi-sub{ font-size:12px; opacity:0.7; margin-top:-2px; }
-          /* 총건수 강조 */
+          /* 총건수 강조(볼드 + 진한 블루) */
           .kpi-card:first-child .kpi-title,
-          .kpi-card:first-child .kpi-value {
-              font-weight:900;
-              color:#1d4ed8; /* 진한 블루 */
-          }
+          .kpi-card:first-child .kpi-value { font-weight:900; color:#1d4ed8; }
         </style>
         """,
         unsafe_allow_html=True
     )
-
     st.markdown(
         f"""
         <div class="kpi-grid">
@@ -278,22 +270,13 @@ with col_kpi:
     )
 
 # ---------------------------
-# 일별 추이
+# (요청: 일별 발생 추이 숨김) — 해당 섹션 제거
 # ---------------------------
-st.subheader("📈 일별 발생 추이")
-ts_df = fetch_timeseries(where_sql, params)
-if ts_df.empty:
-    st.info("데이터가 없습니다.")
-else:
-    st.altair_chart(
-        alt.Chart(ts_df).mark_line(point=True).encode(x='d:T', y='cnt:Q', tooltip=['d:T','cnt:Q']),
-        use_container_width=True
-    )
 
 # -----------------------------------------------------------------------------
-# 목록 (마스터/디테일: 행 클릭 → 그 행 아래로 상세 펼치기)
+# 장애 리스트 (마스터/디테일: 행 클릭으로 상세 펼치기) + 폰트 축소
 # -----------------------------------------------------------------------------
-st.subheader("📄 사건 목록 (행 클릭으로 상세 펼치기)")
+st.subheader("📄 장애 리스트")
 
 list_df = fetch_list(where_sql, params, int(limit))
 if list_df.empty:
@@ -307,7 +290,7 @@ else:
         masterDetail=True,
         detailRowAutoHeight=True,
         detailRowHeight=220,
-        rowHeight=36,
+        rowHeight=34,  # 조금 더 컴팩트
         onRowClicked=JsCode("function(e){ e.node.setExpanded(!e.node.expanded); }"),
         suppressRowClickSelection=False,
         suppressCellSelection=True,
@@ -370,13 +353,13 @@ else:
         height=560,
         allow_unsafe_jscode=True,
         update_mode=GridUpdateMode.NO_UPDATE,
-        enable_enterprise_modules=True,  # masterDetail 활성화
+        enable_enterprise_modules=True,
     )
 
 # ---------------------------
-# 관리: 선택 삭제
+# 선택삭제
 # ---------------------------
-with st.expander("🗑 관리: ID로 선택 삭제"):
+with st.expander("🗑 선택삭제"):
     ids = st.text_input("삭제할 ID들(쉼표로 구분)", placeholder="예: 101,102,120")
     if st.button("삭제 실행", type="primary"):
         try:
@@ -392,9 +375,9 @@ with st.expander("🗑 관리: ID로 선택 삭제"):
             st.error(f"삭제 중 오류: {e}")
 
 # ---------------------------
-# 관리: 업로드 (CSV/엑셀)
+# 파일업로드 (CSV/엑셀)
 # ---------------------------
-with st.expander("⬆️ 관리: 업로드 (CSV/XLSX)"):
+with st.expander("⬆️ 파일업로드"):
     st.caption("가능한 컬럼: started_at, ended_at, duration, platform, locale, inquiry_count, category, description, cause, response, note")
     file = st.file_uploader("파일 선택", type=["csv", "xlsx", "xls"])
 
