@@ -198,34 +198,42 @@ with col_chart:
     if cat_df.empty:
         st.info("카테고리 데이터가 없습니다.")
     else:
-        total_df = pd.DataFrame([{"category": "총건수", "cnt": int(cat_df["cnt"].sum())}])
+        # 총건수 한 줄 추가
+        total_df   = pd.DataFrame([{"category": "총건수", "cnt": int(cat_df["cnt"].sum())}])
         cat_sorted = cat_df.sort_values("cnt", ascending=False).reset_index(drop=True)
-        order = ["총건수"] + cat_sorted["category"].tolist()
+
+        order   = ["총건수"] + cat_sorted["category"].tolist()
         plot_df = pd.concat([total_df, cat_sorted], ignore_index=True)
 
         base = alt.Chart(plot_df).encode(
             y=alt.Y("category:N", sort=order, title=""),
             x=alt.X("cnt:Q", title="건수")
         )
+
         bars = base.mark_bar().encode(
-            # 총건수는 더 진한 블루, 나머지는 기본 블루
             color=alt.condition(
                 alt.datum.category == "총건수",
-                alt.value("#1d4ed8"),
-                alt.value("#3b82f6")
+                alt.value("#1d4ed8"),   # 총건수: 진한 블루
+                alt.value("#3b82f6")    # 나머지: 기본 블루
             ),
-            tooltip=[alt.Tooltip("category:N", title="구분"),
-                     alt.Tooltip("cnt:Q", title="건수")]
+            tooltip=[
+                alt.Tooltip("category:N", title="구분"),
+                alt.Tooltip("cnt:Q", title="건수")
+            ]
         )
+
         labels = base.mark_text(
-            align='left', baseline='middle', dx=4,
-            fontSize=12, color='white', fontWeight='bold'
+            align="left", baseline="middle", dx=4,
+            fontSize=12, color="white", fontWeight="bold"
         ).encode(text=alt.Text("cnt:Q", format=",.0f"))
 
-        st.altair_chart(
-            (bars + labels).properties(height=28 * len(plot_df), width="container"),
-            use_container_width=True
-        )
+        # ▶ 막대 개수가 적어도 너무 낮아지지 않도록 최소 높이 보장
+        min_h   = 180
+        auto_h  = 28 * len(plot_df)
+        height  = max(min_h, auto_h)
+
+        st.altair_chart((bars + labels).properties(height=height, width="container"),
+                        use_container_width=True)
 
 with col_kpi:
     st.markdown(
