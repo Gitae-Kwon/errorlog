@@ -384,6 +384,121 @@ with st.expander("🗑 선택삭제"):
             st.error(f"삭제 중 오류: {e}")
 
 # ---------------------------
+# 오류추가 (웹에서 직접 입력)
+# ---------------------------
+with st.expander("➕ 오류추가"):
+    st.caption("아래 항목을 입력 후 [저장]을 누르면 DB에 바로 추가됩니다.")
+
+    with st.form("add_incident_form", clear_on_submit=False):
+        # ── 기본 시간 입력 (날짜+시간 분리)
+        now = datetime.now().replace(second=0, microsecond=0)
+        c1, c2, c3, c4 = st.columns(4)
+        with c1:
+            s_date = st.date_input("시작일", value=now.date())
+        with c2:
+            s_time = st.time_input("시작시간", value=now.time())
+        with c3:
+            use_end = st.checkbox("종료일시 입력", value=False)
+        with c4:
+            duration = st.text_input("장애시간(예: 2h 30m / 45m)", placeholder="선택")
+
+        if use_end:
+            c5, c6 = st.columns(2)
+            with c5:
+                e_date = st.date_input("종료일", value=now.date(), key="e_date")
+            with c6:
+                e_time = st.time_input("종료시간", value=now.time(), key="e_time")
+        else:
+            e_date, e_time = None, None
+
+        # ── 분류/메타
+        c7, c8, c9, c10 = st.columns(4)
+        with c7:
+            # 기존 옵션 + 직접입력 선택지
+            platform_opt = ["ALL"] + sorted(set([x for x in PLATFORMS if x]))
+            platform_sel = st.selectbox("플랫폼", platform_opt + ["직접 입력…"])
+            platform = st.text_input("플랫폼 직접입력", value="", placeholder="예: WEB / APP",
+                                     disabled=(platform_sel != "직접 입력…"))
+            platform = platform_sel if platform_sel != "직접 입력…" else (platform.strip() or None)
+
+        with c8:
+            locale_opt = ["KR", "JP", "US", "ALL"] + [x for x in LOCALES if x not in ["KR","JP","US","ALL"]]
+            locale_sel = st.selectbox("로케일", locale_opt + ["직접 입력…"])
+            locale = st.text_input("로케일 직접입력", value="", placeholder="예: KR / JP / US",
+                                   disabled=(locale_sel != "직접 입력…"))
+            locale = locale_sel if locale_sel != "직접 입력…" else (locale.strip() or None)
+
+        with c9:
+            inquiry_count = st.number_input("문의량", min_value=0, step=1, value=0)
+        with c10:
+            cat_sel = st.selectbox("카테고리", CATEGORIES + ["직접 입력…"])
+            category = st.text_input("카테고리 직접입력", value="", placeholder="예: 결제/충전, 가입/로그인 등",
+                                     disabled=(cat_sel != "직접 입력…"))
+            category = cat_sel if cat_sel != "직접 입력…" else (category.strip() or None)
+
+        # ── 본문
+        description = st.text_area("장애 내용 (필수)", height=120, placeholder="무슨 현상이 언제/어디서 발생했는지")
+        cause       = st.text_area("원인", height=100, placeholder="원인 분석/추정")
+        response    = st.text_area("대응", height=100, placeholder="조치 내역/연표")
+        note        = st.text_area("비고", height=80, placeholder="관련 링크 등")
+
+        saved = st.form_submit_button("저장", type="primary")
+
+        if saved:
+            # ── 유효성 체크
+            errors = []
+            if not description.strip():
+                errors.append("장애 내용은 필수입니다.")
+            if not (category and str(category).strip()):
+                errors.append("카테고리는 필수입니다.")
+            try:
+                started_at = datetime.combine(s_date, s_time)
+            except Exception:
+                errors.append("시작일시가 올바르지 않습니다.")
+
+            ended_at = None
+            if use_end:
+                try:
+                    ended_at = datetime.combine(e_date, e_time)
+                except Exception:
+                    errors.append("종료일시가 올바르지 않습니다.")
+
+            if errors:
+                for msg in errors:
+                    st.error(msg)
+            else:
+                try:
+                    payload = {
+                        "started_at": started_at,
+                        "ended_at": ended_at,
+                        "duration": duration.strip() or None,
+                        "platform": platform,
+                        "locale": locale,
+                        "inquiry_count": int(inquiry_count) if inquiry_count is not None else 0,
+                        "category": category,
+                        "description": description.strip(),
+                        "cause": cause.strip() or None,
+                        "response": response.strip() or None,
+                        "note": note.strip() or None,
+                    }
+                    with engine.begin() as conn:
+                        conn.execute(
+                            text("""
+                                INSERT INTO incidents
+                                  (started_at, ended_at, duration, platform, locale, inquiry_count,
+                                   category, description, cause, response, note)
+                                VALUES
+                                  (:started_at, :ended_at, :duration, :platform, :locale, :inquiry_count,
+                                   :category, :description, :cause, :response, :note)
+                            """),
+                            payload
+                        )
+                    st.success("오류 현황이 저장되었습니다 ✅")
+                    st.cache_data.clear()
+                except Exception as e:
+                    st.error(f"저장 중 오류가 발생했습니다: {e}")
+                    
+# ---------------------------
 # 파일업로드 (CSV/엑셀)
 # ---------------------------
 with st.expander("⬆️ 파일업로드"):
