@@ -91,19 +91,30 @@ def get_distinct_values():
 @st.cache_data(ttl=90, show_spinner=False)
 def fetch_kpis(where_sql: str, params: dict):
     with engine.connect() as conn:
-        total = pd.read_sql(text(f"SELECT COUNT(*) cnt FROM incidents i WHERE {where_sql}"),
-                            conn, params=params)["cnt"].iloc[0]
+        # 전체 건수
+        total = pd.read_sql(
+            text(f"SELECT COUNT(*) cnt FROM incidents i WHERE {where_sql}"),
+            conn, params=params
+        )["cnt"].iloc[0]
+
+        # 🔹 최근 한달 건수
         tparams = dict(params)
-        tparams["date_from"] = datetime.combine(datetime.now().date(), datetime.min.time())
-        tparams["date_to"]   = datetime.combine(datetime.now().date(), datetime.max.time())
-        today_cnt = pd.read_sql(text(f"SELECT COUNT(*) cnt FROM incidents i WHERE {where_sql}"),
-                                conn, params=tparams)["cnt"].iloc[0]
+        tparams["date_from"] = datetime.now() - timedelta(days=30)
+        tparams["date_to"]   = datetime.now()
+        month_cnt = pd.read_sql(
+            text(f"SELECT COUNT(*) cnt FROM incidents i WHERE {where_sql}"),
+            conn, params=tparams
+        )["cnt"].iloc[0]
+
+        # 최다 카테고리
         top_cat_df = pd.read_sql(text(
             f"SELECT i.category, COUNT(*) cnt FROM incidents i WHERE {where_sql} "
             "GROUP BY i.category ORDER BY cnt DESC LIMIT 1"
         ), conn, params=params)
+
         top_cat = (top_cat_df["category"].iloc[0], int(top_cat_df["cnt"].iloc[0])) if not top_cat_df.empty else ("-", 0)
-    return total, today_cnt, top_cat
+
+    return total, month_cnt, top_cat
 
 @st.cache_data(ttl=90, show_spinner=False)
 def fetch_list(where_sql: str, params: dict, limit: int) -> pd.DataFrame:
@@ -197,7 +208,7 @@ where_sql = " AND ".join(where)
 st.subheader("요약")
 
 # KPI 먼저 계산
-total, today_cnt, top_cat_name, top_cat_cnt = 0, 0, "-", 0
+total, month_cnt, (top_cat_name, top_cat_cnt) = fetch_kpis(where_sql, params)
 try:
     _t, _td, (cat_name, cat_cnt) = fetch_kpis(where_sql, params)
     total, today_cnt, top_cat_name, top_cat_cnt = int(_t), int(_td), str(cat_name), int(cat_cnt)
@@ -286,8 +297,8 @@ with col_kpi:
             <div class="kpi-value">{total:,}</div>
           </div>
           <div class="kpi-card">
-            <div class="kpi-title">오늘 건수</div>
-            <div class="kpi-value">{today_cnt:,}</div>
+            <div class="kpi-title">최근 한달 건수</div>
+            <div class="kpi-value">{month_cnt:,}</div>
           </div>
           <div class="kpi-card">
             <div class="kpi-title">최다 카테고리</div>
