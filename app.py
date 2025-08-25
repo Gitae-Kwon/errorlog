@@ -240,23 +240,34 @@ with col_kpi:
     st.markdown(
         """
         <style>
-          .kpi-grid{display:flex; gap:8px;}
+          .kpi-grid{display:flex; gap:8px; flex-wrap:wrap;}
           .kpi-card{
-              flex:1; text-align:center;
+              flex:1;
+              text-align:center;
               border:1px solid rgba(255,255,255,0.15);
-              border-radius:10px; padding:8px 6px;
+              border-radius:10px;
+              padding:8px 6px;
               background:rgba(255,255,255,0.03);
+              min-width:120px;
           }
           .kpi-title{ font-size:14px; margin:0; opacity:0.85; }
           .kpi-value{ font-size:22px; margin:4px 0; font-weight:700; }
           .kpi-sub{ font-size:12px; opacity:0.7; margin-top:-2px; }
-          /* 총건수 강조(볼드 + 진한 블루) */
           .kpi-card:first-child .kpi-title,
-          .kpi-card:first-child .kpi-value { font-weight:900; color:#1d4ed8; }
+          .kpi-card:first-child .kpi-value {
+              font-weight:900;
+              color:#1d4ed8;
+          }
         </style>
         """,
         unsafe_allow_html=True
     )
+
+    # KPI 데이터 불러오기
+    resin_cnt = int(list_df.query("platform == '레진'").shape[0])
+    balcony_cnt = int(list_df.query("platform == '발코니'").shape[0])
+    delitoon_cnt = int(list_df.query("platform == '델리툰'").shape[0])
+
     st.markdown(
         f"""
         <div class="kpi-grid">
@@ -272,6 +283,18 @@ with col_kpi:
             <div class="kpi-title">최다 카테고리</div>
             <div class="kpi-value">{top_cat_name}</div>
             <div class="kpi-sub">{top_cat_cnt:,}건</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-title">레진</div>
+            <div class="kpi-value">{resin_cnt:,}</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-title">발코니</div>
+            <div class="kpi-value">{balcony_cnt:,}</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-title">델리툰</div>
+            <div class="kpi-value">{delitoon_cnt:,}</div>
           </div>
         </div>
         """,
