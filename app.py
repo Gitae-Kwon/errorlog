@@ -387,6 +387,8 @@ with st.expander("🗑 선택삭제"):
 # 오류추가 (웹에서 직접 입력)
 # ---------------------------
 with st.form("add_incident_form", clear_on_submit=False):
+    st.subheader("📝 오류 현황 추가")  # ← 타이틀 추가
+
     # ── 기본 시간 입력
     now = datetime.now().replace(second=0, microsecond=0)
     c1, c2, c3, c4 = st.columns(4)
@@ -408,7 +410,7 @@ with st.form("add_incident_form", clear_on_submit=False):
     else:
         e_date, e_time = None, None
 
-    # ── 분류/메타 (단일 선택: 현재 스키마 호환)
+    # ── 분류/메타
     c7, c8, c9, c10 = st.columns(4)
     with c7:
         platform = st.selectbox("플랫폼", options=(["ALL"] + [x for x in PLATFORMS if x]))
@@ -417,7 +419,18 @@ with st.form("add_incident_form", clear_on_submit=False):
     with c9:
         inquiry_count = st.number_input("문의량", min_value=0, step=1, value=0)
     with c10:
-        category = st.selectbox("카테고리", options=CATEGORIES)  # ← 저장된 목록에서만 선택
+        category = st.selectbox("카테고리", options=CATEGORIES)
+
+    # ── 본문
+    description = st.text_area("장애 내용 (필수)", height=120, placeholder="무슨 현상이 언제/어디서 발생했는지")
+    cause       = st.text_area("원인", height=100, placeholder="원인 분석/추정")
+    response    = st.text_area("대응", height=100, placeholder="조치 내역/연표")
+    note        = st.text_area("비고", height=80, placeholder="관련 링크 등")
+
+    saved = st.form_submit_button("저장", type="primary")
+
+    if saved:
+        ...
 
     # ── 본문
     description = st.text_area("장애 내용 (필수)", height=120, placeholder="무슨 현상이 언제/어디서 발생했는지")
