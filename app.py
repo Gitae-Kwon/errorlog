@@ -1,9 +1,9 @@
 # app_topcombo_master_detail.py
-# 좌: 카테고리 차트 / 우: KPI(가로 3개)
+# 좌: 카테고리 차트 / 우: KPI(가로 카드)
 # 목록: 마스터/디테일(행 클릭으로 상세 펼침)
 # 날짜: 시작/종료일 개별 입력
 # created_at / updated_at 숨김
-# 차트: 색상+라벨, 총건수 강조
+# 차트: 색상+라벨, 총건수 강조 + 플랫폼별 KPI(레진/발코니/델리툰)
 
 import os
 import pandas as pd
@@ -18,7 +18,6 @@ from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode, JsCode
 # ---------------------------
 st.set_page_config(page_title="장애현황", page_icon="📊", layout="wide")
 st.markdown("<h1 style='font-size:2rem;margin:0 0 0.5rem 0;'>📊 장애현황</h1>", unsafe_allow_html=True)
-# 설명 캡션은 삭제
 
 # --- 표/에디터 셀 줄바꿈 + AgGrid 폰트 축소 ---
 st.markdown(
@@ -53,7 +52,7 @@ def get_engine():
         cfg = s["DB"];  host = cfg.get("DB_HOST") or cfg.get("HOST")
         port = int(cfg.get("DB_PORT") or cfg.get("PORT") or 3306)
         user = cfg.get("DB_USER") or cfg.get("USER")
-        pw   = cfg.get("DB_PASSWORD") or cfg.get("DB_PASSWORD")
+        pw   = cfg.get("DB_PASSWORD") or cfg.get("PASSWORD")
         name = cfg.get("DB_NAME") or cfg.get("NAME")
     else:
         host = os.getenv("DB_HOST"); port = int(os.getenv("DB_PORT") or 3306)
@@ -137,6 +136,21 @@ def fetch_category_counts(where_sql: str, params: dict) -> pd.DataFrame:
         )
     return df
 
+# 🔹 플랫폼 카운트 (레진/발코니/델리툰 등 원하는 목록만 집계)
+@st.cache_data(ttl=90, show_spinner=False)
+def fetch_platform_counts(where_sql: str, params: dict, platforms: list[str]) -> dict:
+    q = text(f"""
+        SELECT i.platform, COUNT(*) AS cnt
+        FROM incidents i
+        WHERE {where_sql} AND i.platform IN :plist
+        GROUP BY i.platform
+    """)
+    p = dict(params)
+    p["plist"] = tuple(platforms)
+    with engine.connect() as conn:
+        df = pd.read_sql(q, conn, params=p)
+    return dict(zip(df["platform"], df["cnt"]))
+
 PLATFORMS, LOCALES, CATEGORIES = get_distinct_values()
 
 # ---------------------------
@@ -178,7 +192,7 @@ if keyword.strip():
 where_sql = " AND ".join(where)
 
 # ===========================
-# 요약: (좌) 카테고리 그래프 / (우) KPI(가로 3개, 가운데 정렬)
+# 요약: (좌) 카테고리 그래프 / (우) KPI
 # ===========================
 st.subheader("요약")
 
@@ -189,6 +203,12 @@ try:
     total, today_cnt, top_cat_name, top_cat_cnt = int(_t), int(_td), str(cat_name), int(cat_cnt)
 except Exception as e:
     st.warning(f"KPI 로딩 오류: {e}")
+
+# 🔹 플랫폼 KPI(레진/발코니/델리툰) — DB에서 직접 집계
+pf_counts = fetch_platform_counts(where_sql, params, ["레진", "발코니", "델리툰"])
+resin_cnt    = int(pf_counts.get("레진", 0))
+balcony_cnt  = int(pf_counts.get("발코니", 0))
+delitoon_cnt = int(pf_counts.get("델리툰", 0))
 
 # 좌/우 50% 배치
 col_chart, col_kpi = st.columns([1, 1])
@@ -208,7 +228,7 @@ with col_chart:
         base = alt.Chart(plot_df).encode(
             y=alt.Y("category:N", sort=order, title=""),
             x=alt.X("cnt:Q", title="건수",
-                    axis=alt.Axis(format="d", tickMinStep=1))  # 🔹 정수 표시
+                    axis=alt.Axis(format="d", tickMinStep=1))  # 정수
         )
 
         bars = base.mark_bar().encode(
@@ -228,7 +248,6 @@ with col_chart:
             fontSize=12, color="white", fontWeight="bold"
         ).encode(text=alt.Text("cnt:Q", format=",.0f"))
 
-        # ▶ 막대 개수가 적어도 너무 낮아지지 않도록 최소 높이 보장
         min_h   = 180
         auto_h  = 28 * len(plot_df)
         height  = max(min_h, auto_h)
@@ -242,32 +261,23 @@ with col_kpi:
         <style>
           .kpi-grid{display:flex; gap:8px; flex-wrap:wrap;}
           .kpi-card{
-              flex:1;
+              flex:1 1 30%;
               text-align:center;
               border:1px solid rgba(255,255,255,0.15);
-              border-radius:10px;
-              padding:8px 6px;
+              border-radius:10px; padding:8px 6px;
               background:rgba(255,255,255,0.03);
-              min-width:120px;
-          }
+              min-width:150px;
+            }
           .kpi-title{ font-size:14px; margin:0; opacity:0.85; }
           .kpi-value{ font-size:22px; margin:4px 0; font-weight:700; }
           .kpi-sub{ font-size:12px; opacity:0.7; margin-top:-2px; }
+          /* 총건수 강조(볼드 + 진한 블루) */
           .kpi-card:first-child .kpi-title,
-          .kpi-card:first-child .kpi-value {
-              font-weight:900;
-              color:#1d4ed8;
-          }
+          .kpi-card:first-child .kpi-value { font-weight:900; color:#1d4ed8; }
         </style>
         """,
         unsafe_allow_html=True
     )
-
-    # KPI 데이터 불러오기
-    resin_cnt = int(list_df.query("platform == '레진'").shape[0])
-    balcony_cnt = int(list_df.query("platform == '발코니'").shape[0])
-    delitoon_cnt = int(list_df.query("platform == '델리툰'").shape[0])
-
     st.markdown(
         f"""
         <div class="kpi-grid">
@@ -284,6 +294,7 @@ with col_kpi:
             <div class="kpi-value">{top_cat_name}</div>
             <div class="kpi-sub">{top_cat_cnt:,}건</div>
           </div>
+
           <div class="kpi-card">
             <div class="kpi-title">레진</div>
             <div class="kpi-value">{resin_cnt:,}</div>
@@ -301,13 +312,9 @@ with col_kpi:
         unsafe_allow_html=True
     )
 
-# ---------------------------
-# (요청: 일별 발생 추이 숨김) — 해당 섹션 제거
-# ---------------------------
-
-# -----------------------------------------------------------------------------
+# ---------------------------------------------------------------------
 # 장애 리스트 (마스터/디테일: 행 클릭으로 상세 펼치기) + 폰트 축소
-# -----------------------------------------------------------------------------
+# ---------------------------------------------------------------------
 st.subheader("📄 장애 리스트")
 
 list_df = fetch_list(where_sql, params, int(limit))
@@ -322,7 +329,7 @@ else:
         masterDetail=True,
         detailRowAutoHeight=True,
         detailRowHeight=220,
-        rowHeight=34,  # 조금 더 컴팩트
+        rowHeight=34,
         onRowClicked=JsCode("function(e){ e.node.setExpanded(!e.node.expanded); }"),
         suppressRowClickSelection=False,
         suppressCellSelection=True,
@@ -411,9 +418,8 @@ with st.expander("🗑 선택삭제"):
 # ---------------------------
 with st.expander("➕ 오류추가"):
     st.caption("아래 항목을 입력 후 [저장]을 누르면 DB에 바로 추가됩니다.")
-    
     with st.form("add_incident_form", clear_on_submit=False):
-        # ── 기본 시간 입력
+        # 기본 시간 입력
         now = datetime.now().replace(second=0, microsecond=0)
         c1, c2, c3, c4 = st.columns(4)
         with c1:
@@ -434,7 +440,7 @@ with st.expander("➕ 오류추가"):
         else:
             e_date, e_time = None, None
 
-    # ── 분류/메타 (단일 선택: 현재 스키마 호환)
+        # 분류/메타
         c7, c8, c9, c10 = st.columns(4)
         with c7:
             platform = st.selectbox("플랫폼", options=(["ALL"] + [x for x in PLATFORMS if x]))
@@ -443,9 +449,9 @@ with st.expander("➕ 오류추가"):
         with c9:
             inquiry_count = st.number_input("문의량", min_value=0, step=1, value=0)
         with c10:
-            category = st.selectbox("카테고리", options=CATEGORIES)  # ← 저장된 목록에서만 선택
+            category = st.selectbox("카테고리", options=CATEGORIES)
 
-    # ── 본문
+        # 본문
         description = st.text_area("장애 내용 (필수)", height=120, placeholder="무슨 현상이 언제/어디서 발생했는지")
         cause       = st.text_area("원인", height=100, placeholder="원인 분석/추정")
         response    = st.text_area("대응", height=100, placeholder="조치 내역/연표")
@@ -454,7 +460,7 @@ with st.expander("➕ 오류추가"):
         saved = st.form_submit_button("저장", type="primary")
 
         if saved:
-        # ── 유효성 체크
+            # 유효성 체크
             errors = []
             if not description.strip():
                 errors.append("장애 내용은 필수입니다.")
@@ -507,7 +513,7 @@ with st.expander("➕ 오류추가"):
                     st.cache_data.clear()
                 except Exception as e:
                     st.error(f"저장 중 오류가 발생했습니다: {e}")
-                    
+
 # ---------------------------
 # 파일업로드 (CSV/엑셀)
 # ---------------------------
