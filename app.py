@@ -232,8 +232,6 @@ with col_chart:
         # 총건수 한 줄 추가
         total_df   = pd.DataFrame([{"category": "총건수", "cnt": int(cat_df["cnt"].sum())}])
         cat_sorted = cat_df.sort_values("cnt", ascending=False).reset_index(drop=True)
-
-        order   = ["총건수"] + cat_sorted["category"].tolist()
         plot_df = pd.concat([total_df, cat_sorted], ignore_index=True)
 
         base = alt.Chart(plot_df).encode(
