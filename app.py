@@ -229,27 +229,21 @@ with col_chart:
     if cat_df.empty:
         st.info("카테고리 데이터가 없습니다.")
     else:
-        # 총건수 한 줄 추가
-        total_df   = pd.DataFrame([{"category": "총건수", "cnt": int(cat_df["cnt"].sum())}])
+        # 🔹 총건수 제외
         cat_sorted = cat_df.sort_values("cnt", ascending=False).reset_index(drop=True)
-        plot_df = pd.concat([total_df, cat_sorted], ignore_index=True)
+        plot_df    = cat_sorted.copy()
+        order      = plot_df["category"].tolist()
 
         base = alt.Chart(plot_df).encode(
             y=alt.Y("category:N", sort=order, title=""),
             x=alt.X("cnt:Q", title="건수",
-                    axis=alt.Axis(format="d", tickMinStep=1))  # 정수
+                    axis=alt.Axis(format="d", tickMinStep=1))
         )
 
         bars = base.mark_bar().encode(
-            color=alt.condition(
-                alt.datum.category == "총건수",
-                alt.value("#1d4ed8"),   # 총건수: 진한 블루
-                alt.value("#3b82f6")    # 나머지: 기본 블루
-            ),
-            tooltip=[
-                alt.Tooltip("category:N", title="구분"),
-                alt.Tooltip("cnt:Q", title="건수")
-            ]
+            color=alt.value("#3b82f6"),
+            tooltip=[alt.Tooltip("category:N", title="구분"),
+                     alt.Tooltip("cnt:Q", title="건수")]
         )
 
         labels = base.mark_text(
